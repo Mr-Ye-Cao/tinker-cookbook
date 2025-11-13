@@ -2,6 +2,8 @@
 
 This project integrates the CVDP benchmark with Tinker to train language models on RTL (Verilog/SystemVerilog) code generation using reinforcement learning and on-policy distillation.
 
+> **Note**: This implementation uses **single-shot generation** (Approach 1). For discussion of multi-turn agents (qwen-code style), see [MULTI_TURN_AGENTS.md](MULTI_TURN_AGENTS.md).
+
 ## Overview
 
 ### What We're Building
