@@ -1,5 +1,8 @@
 # Workspaces (contains generated files and Docker artifacts)
 workspaces/
+logs/
+*.log
+cvdp_5_problems.jsonl
 
 # Python
 __pycache__/

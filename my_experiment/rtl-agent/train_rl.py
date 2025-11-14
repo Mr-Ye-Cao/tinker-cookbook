@@ -30,10 +30,7 @@ class CLIConfig:
     load_checkpoint_path: str | None = None
 
     # Dataset configuration
-    cvdp_jsonl_path: str = chz.field(
-        default="/path/to/cvdp_v1.0.1_agentic_code_generation_no_commercial.jsonl",
-        help="Path to CVDP JSONL dataset"
-    )
+    cvdp_jsonl_path: str = "/path/to/cvdp_v1.0.1_agentic_code_generation_no_commercial.jsonl"
     test_jsonl_path: str | None = None
     test_split: float = 0.0
 
