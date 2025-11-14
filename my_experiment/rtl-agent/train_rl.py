@@ -36,7 +36,7 @@ class CLIConfig:
 
     # CVDP configuration
     workspace_dir: str = "/tmp/cvdp_workspace"
-    oss_sim_image: str = "ghcr.io/hdl/sim/osv:latest"
+    oss_sim_image: str = "ghcr.io/hdl/sim/osvb:latest"
     timeout_seconds: int = 300
 
     # Reward shaping

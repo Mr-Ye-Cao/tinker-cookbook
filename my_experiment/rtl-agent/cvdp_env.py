@@ -39,7 +39,7 @@ class CVDPEnv(Env):
         workspace_dir: str,
         renderer: renderers.Renderer,
         system_message: str | None = None,
-        oss_sim_image: str = "ghcr.io/hdl/sim/osv:latest",
+        oss_sim_image: str = "ghcr.io/hdl/sim/osvb:latest",
         timeout_seconds: int = 300,
         format_coef: float = 0.1,
         syntax_coef: float = 0.3,
@@ -300,7 +300,9 @@ class CVDPEnv(Env):
         code_link = os.path.join(harness_dir, "code")
         if not os.path.exists(code_link):
             try:
-                os.symlink(problem_workspace, code_link, target_is_directory=True)
+                # Use absolute path for symlink to ensure it works from harness directory
+                abs_problem_workspace = os.path.abspath(problem_workspace)
+                os.symlink(abs_problem_workspace, code_link, target_is_directory=True)
             except FileExistsError:
                 # Another parallel rollout already created it, that's fine
                 pass

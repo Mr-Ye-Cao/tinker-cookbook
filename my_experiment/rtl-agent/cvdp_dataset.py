@@ -37,7 +37,7 @@ class CVDPDataset(RLDataset):
         group_size: int,
         renderer: renderers.Renderer,
         workspace_dir: str,
-        oss_sim_image: str = "ghcr.io/hdl/sim/osv:latest",
+        oss_sim_image: str = "ghcr.io/hdl/sim/osvb:latest",
         timeout_seconds: int = 300,
         format_coef: float = 0.1,
         syntax_coef: float = 0.3,
@@ -137,7 +137,7 @@ class CVDPDatasetBuilder(RLDatasetBuilder):
 
     # Optional parameters
     workspace_dir: str = "/tmp/cvdp_workspace"
-    oss_sim_image: str = "ghcr.io/hdl/sim/osv:latest"
+    oss_sim_image: str = "ghcr.io/hdl/sim/osvb:latest"
     timeout_seconds: int = 300
     format_coef: float = 0.1
     syntax_coef: float = 0.3
