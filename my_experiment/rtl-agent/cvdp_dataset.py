@@ -99,6 +99,7 @@ class CVDPDataset(RLDataset):
                     prompt=problem["prompt"],
                     context_files=problem.get("context", {}),
                     harness_config=problem.get("harness", {}),
+                    system_message=problem.get("system_message"),
                     workspace_dir=self.workspace_dir,
                     renderer=self.renderer,
                     oss_sim_image=self.oss_sim_image,

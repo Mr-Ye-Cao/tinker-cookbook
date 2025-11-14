@@ -38,6 +38,7 @@ class CVDPEnv(Env):
         harness_config: Dict[str, str],
         workspace_dir: str,
         renderer: renderers.Renderer,
+        system_message: str | None = None,
         oss_sim_image: str = "ghcr.io/hdl/sim/osv:latest",
         timeout_seconds: int = 300,
         format_coef: float = 0.1,
@@ -52,6 +53,7 @@ class CVDPEnv(Env):
             harness_config: Dict of harness file_path -> content
             workspace_dir: Directory to store CVDP workspace
             renderer: Tinker renderer for tokenization
+            system_message: Optional system message (instructions about file operations, etc.)
             oss_sim_image: Docker image for simulation (default: osvb)
             timeout_seconds: Docker execution timeout
             format_coef: Reward coefficient for valid format
@@ -62,6 +64,7 @@ class CVDPEnv(Env):
         self.prompt = prompt
         self.context_files = context_files
         self.harness_config = harness_config
+        self.system_message = system_message
         self.workspace_dir = workspace_dir
         self.renderer = renderer
         self.oss_sim_image = oss_sim_image
@@ -78,6 +81,69 @@ class CVDPEnv(Env):
     @property
     def stop_condition(self) -> StopCondition:
         return self.renderer.get_stop_sequences()
+
+    def _build_prompt_with_context(self) -> str:
+        """
+        Build enriched prompt including specification and relevant context files.
+
+        This ensures the model has access to all necessary information:
+        - Original task prompt
+        - Specification file (critical for correct interface)
+        - Testbench (helpful for understanding requirements)
+        - Any other documentation
+
+        Returns:
+            Complete prompt with embedded context files
+        """
+        parts = [self.prompt]
+        parts.append("")  # Blank line separator
+
+        # Priority 1: Include specification (critical for correct interface)
+        spec_file = None
+        for file_path in self.context_files.keys():
+            if 'specification' in file_path.lower() or 'spec' in file_path.lower():
+                spec_file = file_path
+                break
+
+        if spec_file:
+            parts.append(f"## Context: Specification ({spec_file})")
+            parts.append("")
+            parts.append(self.context_files[spec_file])
+            parts.append("")
+            logger.info(f"Including specification: {spec_file} ({len(self.context_files[spec_file])} chars)")
+
+        # Priority 2: Include testbench (helpful for understanding test expectations)
+        tb_file = None
+        for file_path in self.context_files.keys():
+            if ('tb' in file_path.lower() or 'test' in file_path.lower()) and file_path != spec_file:
+                tb_file = file_path
+                break
+
+        if tb_file:
+            parts.append(f"## Context: Testbench ({tb_file})")
+            parts.append("")
+            parts.append(self.context_files[tb_file])
+            parts.append("")
+            logger.info(f"Including testbench: {tb_file} ({len(self.context_files[tb_file])} chars)")
+
+        # Priority 3: Include any other documentation
+        for file_path, content in self.context_files.items():
+            if file_path not in [spec_file, tb_file]:
+                # Skip RTL template files (usually empty placeholders)
+                if file_path.startswith('rtl/') and len(content.strip()) < 100:
+                    continue
+
+                # Include other documentation
+                if file_path.startswith('docs/') or 'readme' in file_path.lower():
+                    parts.append(f"## Context: {file_path}")
+                    parts.append("")
+                    parts.append(content)
+                    parts.append("")
+                    logger.info(f"Including documentation: {file_path} ({len(content)} chars)")
+
+        enriched_prompt = "\n".join(parts)
+        logger.info(f"Built enriched prompt: {len(enriched_prompt)} total chars")
+        return enriched_prompt
 
     def _setup_workspace(self):
         """Create CVDP workspace with context files"""
@@ -99,13 +165,32 @@ class CVDPEnv(Env):
         logger.info(f"Workspace setup complete: {problem_workspace}")
 
     async def initial_observation(self) -> tuple[Observation, StopCondition]:
-        """Return the RTL design task as initial prompt"""
-        convo = [
-            {"role": "user", "content": self.prompt}
-        ]
+        """
+        Return the RTL design task with full context.
+
+        Builds enriched prompt including:
+        - System message (if available)
+        - Task description
+        - Specification file
+        - Testbench
+        - Other documentation
+        """
+        # Build enriched prompt with all context
+        enriched_prompt = self._build_prompt_with_context()
+
+        convo = []
+
+        # Add system message if available
+        if self.system_message:
+            convo.append({"role": "system", "content": self.system_message})
+            logger.info(f"Including system message ({len(self.system_message)} chars)")
+
+        # Add enriched user prompt
+        convo.append({"role": "user", "content": enriched_prompt})
 
         logtree.log_text(f"Problem: {self.problem_id}")
-        logtree.log_text(f"Prompt: {self.prompt[:200]}...")
+        logtree.log_text(f"Total prompt length: {len(enriched_prompt)} chars")
+        logtree.log_text(f"Context files included: {len(self.context_files)}")
 
         return self.renderer.build_generation_prompt(convo), self.stop_condition
 
@@ -214,7 +299,11 @@ class CVDPEnv(Env):
         # Create code symlink for harness to access RTL/verif files
         code_link = os.path.join(harness_dir, "code")
         if not os.path.exists(code_link):
-            os.symlink(problem_workspace, code_link, target_is_directory=True)
+            try:
+                os.symlink(problem_workspace, code_link, target_is_directory=True)
+            except FileExistsError:
+                # Another parallel rollout already created it, that's fine
+                pass
 
         # Run Docker Compose
         try:
@@ -375,13 +464,34 @@ class CVDPEnv(Env):
 
         Strategies:
         1. Parse from prompt (e.g., "...at the location:rtl/fixed_priority_arbiter.v")
-        2. Look for existing RTL files in context
+        2. Look for existing RTL files in context (check harness config for expected filename)
         3. Use default "rtl/design.sv"
         """
-        # Strategy 1: Parse from prompt
+        # Strategy 1: Check harness config for expected RTL file
+        # The harness .env file specifies VERILOG_SOURCES which is the authoritative source
+        for file_path, content in self.harness_config.items():
+            if file_path.endswith('.env'):
+                # Parse VERILOG_SOURCES from .env file
+                for line in content.split('\n'):
+                    if line.startswith('VERILOG_SOURCES'):
+                        # Format: VERILOG_SOURCES = /code/rtl/fixed_priority_arbiter.sv
+                        parts = line.split('=')
+                        if len(parts) == 2:
+                            full_path = parts[1].strip()
+                            # Remove /code/ prefix if present
+                            if full_path.startswith('/code/'):
+                                path = full_path[6:]  # Remove '/code/'
+                            else:
+                                path = full_path
+                            logger.debug(f"Found RTL path in harness config: {path}")
+                            return path
+
+        # Strategy 2: Parse from prompt (fallback)
         location_match = re.search(r"at the location:(\S+)", self.prompt)
         if location_match:
             path = location_match.group(1).strip()
+            # Remove trailing punctuation (period, comma, etc.)
+            path = path.rstrip('.,;:')
             logger.debug(f"Found RTL path in prompt: {path}")
             return path
 
