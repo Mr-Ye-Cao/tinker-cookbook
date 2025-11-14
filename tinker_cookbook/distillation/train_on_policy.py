@@ -4,6 +4,7 @@ https://thinkingmachines.ai/blog/on-policy-distillation
 """
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -54,6 +55,9 @@ async def incorporate_kl_penalty(
     dataset_indices_D: List[int],
     kl_penalty_coef: float,
     kl_discount_factor: float,
+    log_path: str | None = None,
+    step: int | None = None,
+    tokenizer: Tokenizer | None = None,
 ) -> Dict[str, float]:
     """
     Compute reverse KL between the student (log p) and the teacher model (log q), computed as
@@ -91,6 +95,43 @@ async def incorporate_kl_penalty(
             teacher_logprobs_D, sampled_logprobs_D, float_masks
         )
     ]
+
+    # Save detailed token-level data if log_path is provided
+    if log_path is not None and step is not None:
+        token_data_dir = os.path.join(log_path, "token_level_data")
+        os.makedirs(token_data_dir, exist_ok=True)
+
+        # Save data for each datum in the batch
+        for i, datum in enumerate(data_D):
+            token_data = {
+                "step": step,
+                "datum_index": i,
+                "dataset_index": dataset_indices_D[i],
+                "num_tokens": len(teacher_logprobs_D[i]) - 1,  # -1 because teacher_logprobs includes initial token
+                "student_logprobs": sampled_logprobs_D[i].tolist(),
+                "teacher_logprobs": teacher_logprobs_D[i][1:],  # Skip first token
+                "kl_per_token": reverse_kl[i].tolist(),
+                "mask": float_masks[i].tolist(),
+                "target_tokens": datum.loss_fn_inputs["target_tokens"].data,
+            }
+
+            # Decode tokens if tokenizer is available
+            if tokenizer is not None:
+                try:
+                    token_data["decoded_tokens"] = [
+                        tokenizer.decode([int(token_id)])
+                        for token_id in datum.loss_fn_inputs["target_tokens"].data
+                    ]
+                except Exception as e:
+                    logger.warning(f"Failed to decode tokens: {e}")
+
+            # Save to file
+            output_file = os.path.join(token_data_dir, f"step_{step:04d}_datum_{i}.json")
+            with open(output_file, "w") as f:
+                json.dump(token_data, f, indent=2)
+
+        logger.info(f"Saved token-level KL data to {token_data_dir}/step_{step:04d}_datum_*.json")
+
     # Track per-dataset KL for logging
     # dataset_idx -> (sum of KL, sum of mask)
     per_dataset_kl: Dict[int, tuple[float, float]] = {}
@@ -170,6 +211,8 @@ async def prepare_minibatch(
     teacher_clients: List[tinker.SamplingClient],
     kl_penalty_coef: float,
     kl_discount_factor: float,
+    log_path: str | None = None,
+    step: int | None = None,
 ) -> tuple[list[tinker.Datum], dict[str, Any]]:
     """Converts the trajectories into a minibatch, and provides metrics about the minibatch"""
 
@@ -210,6 +253,9 @@ async def prepare_minibatch(
                 dataset_indices_D,
                 kl_penalty_coef,
                 kl_discount_factor,
+                log_path=log_path,
+                step=step,
+                tokenizer=tokenizer,
             )
         metrics.update(kl_penalty_metrics)
 
@@ -240,6 +286,8 @@ async def do_train_step_and_get_sampling_client(
         teacher_clients,
         kl_penalty_coef=cfg.kl_penalty_coef,
         kl_discount_factor=cfg.kl_discount_factor,
+        log_path=cfg.log_path,
+        step=i_batch,
     )
     metrics.update(prepare_minibatch_metrics)
 
