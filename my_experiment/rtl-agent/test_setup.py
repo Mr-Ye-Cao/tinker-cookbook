@@ -63,7 +63,8 @@ async def test_environment_creation():
 
         # Test initial observation
         obs, stop = await env.initial_observation()
-        logger.info(f"✓ Initial observation created: {len(obs.tokens)} tokens")
+        obs_tokens = obs.to_ints()
+        logger.info(f"✓ Initial observation created: {len(obs_tokens)} tokens")
 
         # Check workspace was created
         workspace_path = Path(tmpdir) / test_problem["id"]
@@ -83,7 +84,7 @@ async def test_dataset_loading():
     logger.info("Testing dataset loading...")
 
     # Check if example dataset exists
-    cvdp_benchmark_path = Path("/Users/yecao/Downloads/project/cvdp_benchmark")
+    cvdp_benchmark_path = Path("/home/ubuntu/peter/benchmark/cvdp_benchmark")
     example_dataset = cvdp_benchmark_path / "example_dataset" / "cvdp_v1.0.1_example_agentic_code_generation_no_commercial_with_solutions.jsonl"
 
     if not example_dataset.exists():

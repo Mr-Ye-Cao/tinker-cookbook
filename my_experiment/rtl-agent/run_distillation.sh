@@ -1,0 +1,67 @@
+#!/bin/bash
+# On-Policy Distillation Training Script for RTL Code Generation
+# Distills a large model (teacher) into a smaller model (student)
+
+set -e  # Exit on error
+
+echo "====================================================================="
+echo "RTL Agent - On-Policy Distillation Training"
+echo "====================================================================="
+echo ""
+
+# Check if venv exists
+if [ ! -d "venv" ]; then
+    echo "Error: Virtual environment not found. Run setup first."
+    exit 1
+fi
+
+# Activate virtual environment
+source venv/bin/activate
+
+# Set environment variables
+export TINKER_API_KEY="${TINKER_API_KEY:-$(cat ../../.env | grep TINKER_API_KEY | cut -d'=' -f2)}"
+
+# Default dataset path - you can override this
+DATASET_PATH="${1:-cvdp_5_problems.jsonl}"
+
+# Check if dataset exists
+if [ ! -f "$DATASET_PATH" ]; then
+    echo "Warning: Dataset not found at $DATASET_PATH"
+    echo "You can create it by selecting 5 problems from the full dataset:"
+    echo "  head -n 5 /home/ubuntu/peter/benchmark/cvdp_benchmark/example_dataset/cvdp_v1.0.1_example_agentic_code_generation_no_commercial_with_solutions.jsonl > cvdp_5_problems.jsonl"
+    echo ""
+    read -p "Do you want to use the full example dataset instead? (y/n) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        DATASET_PATH="/home/ubuntu/peter/benchmark/cvdp_benchmark/example_dataset/cvdp_v1.0.1_example_agentic_code_generation_no_commercial_with_solutions.jsonl"
+    else
+        exit 1
+    fi
+fi
+
+echo "Starting distillation training..."
+echo "Dataset: $DATASET_PATH"
+echo "Student model: openai/gpt-oss-20b"
+echo "Teacher model: Qwen/Qwen3-32B"
+echo ""
+
+# Run distillation training
+python train_distillation.py \
+  cvdp_jsonl_path="$DATASET_PATH" \
+  student_model=openai/gpt-oss-20b \
+  teacher_model=Qwen/Qwen3-32B \
+  batch_size=2 \
+  group_size=1 \
+  learning_rate=1e-4 \
+  max_tokens=4096 \
+  kl_penalty_coef=1.0 \
+  workspace_dir=./workspaces \
+  log_path=./logs \
+  eval_every=5 \
+  save_every=5 \
+  behavior_if_log_dir_exists=delete
+
+echo ""
+echo "====================================================================="
+echo "Distillation Training Complete!"
+echo "====================================================================="
