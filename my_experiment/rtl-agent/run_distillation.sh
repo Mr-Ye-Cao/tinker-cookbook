@@ -39,24 +39,31 @@ if [ ! -f "$DATASET_PATH" ]; then
     fi
 fi
 
+# Create timestamped log and workspace directories
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+LOG_DIR="./logs/distillation_run_${TIMESTAMP}"
+WORKSPACE_DIR="./workspaces/workspace_${TIMESTAMP}"
+
 echo "Starting distillation training..."
 echo "Dataset: $DATASET_PATH"
-echo "Student model: openai/gpt-oss-20b"
-echo "Teacher model: Qwen/Qwen3-32B"
+echo "Student model: Qwen/Qwen3-8B"
+echo "Teacher model: Qwen/Qwen3-30B-A3B"
+echo "Log directory: $LOG_DIR"
+echo "Workspace directory: $WORKSPACE_DIR"
 echo ""
 
 # Run distillation training
 python train_distillation.py \
   cvdp_jsonl_path="$DATASET_PATH" \
-  student_model=openai/gpt-oss-20b \
-  teacher_model=Qwen/Qwen3-32B \
-  batch_size=2 \
+  student_model=Qwen/Qwen3-8B \
+  teacher_model=Qwen/Qwen3-30B-A3B \
+  batch_size=1 \
   group_size=1 \
   learning_rate=1e-4 \
   max_tokens=4096 \
   kl_penalty_coef=1.0 \
-  workspace_dir=./workspaces \
-  log_path=./logs \
+  workspace_dir="$WORKSPACE_DIR" \
+  log_path="$LOG_DIR" \
   eval_every=5 \
   save_every=5 \
   behavior_if_log_dir_exists=delete
