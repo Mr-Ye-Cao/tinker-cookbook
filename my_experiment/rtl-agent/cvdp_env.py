@@ -436,14 +436,16 @@ class CVDPEnv(Env):
 
     def _extract_verilog(self, text: str) -> Optional[str]:
         """
-        Extract Verilog/SystemVerilog code from markdown code block.
+        Extract Verilog/SystemVerilog code from markdown code block or agentic shell commands.
 
         Looks for patterns like:
         - ```verilog
         - ```systemverilog
         - ```sv
         - ```v
+        - echo 'module ...' > file.v (agentic format)
         """
+        # First try standard markdown code blocks
         patterns = [
             r'```(?:system)?verilog\n(.*?)```',
             r'```sv\n(.*?)```',
@@ -455,6 +457,35 @@ class CVDPEnv(Env):
             if match:
                 code = match.group(1).strip()
                 logger.debug(f"Extracted code using pattern: {pattern}")
+                return code
+
+        # Try agentic format: extract code from echo commands or heredocs
+        # Pattern 1: echo 'module ...' > file.v or echo "module ..." > file.v
+        echo_patterns = [
+            r"echo\s+['\"](.+?module.+?endmodule.*?)['\"]",  # Single/double quotes
+            r"echo\s+'([^']+module[^']+endmodule[^']*)'",     # Single quotes only
+            r'echo\s+"([^"]+module[^"]+endmodule[^"]*)"',     # Double quotes only
+        ]
+
+        for pattern in echo_patterns:
+            match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+            if match:
+                code = match.group(1).strip()
+                # Unescape newlines (\n -> actual newlines)
+                code = code.replace('\\n', '\n')
+                # Remove any remaining quotes or escape characters
+                code = code.replace("\\'", "'").replace('\\"', '"')
+                logger.info(f"Extracted code from agentic echo command ({len(code)} chars)")
+                return code
+
+        # Pattern 2: cat > file << 'EOF' ... EOF (heredoc format)
+        heredoc_pattern = r"cat\s*>\s*\S+\s*<<\s*['\"]?EOF['\"]?\s*\n(.+?)\nEOF"
+        match = re.search(heredoc_pattern, text, re.DOTALL | re.IGNORECASE)
+        if match:
+            code = match.group(1).strip()
+            # Check if it contains module...endmodule
+            if re.search(r'module\s+\w+.*?endmodule', code, re.DOTALL | re.IGNORECASE):
+                logger.info(f"Extracted code from agentic heredoc ({len(code)} chars)")
                 return code
 
         logger.warning("No Verilog code block found in response")
