@@ -102,8 +102,9 @@ class CVDPEnv(Env):
         spec_file = None
         for file_path in self.context_files.keys():
             if 'specification' in file_path.lower() or 'spec' in file_path.lower():
-                spec_file = file_path
-                break
+                if self.context_files[file_path] is not None:
+                    spec_file = file_path
+                    break
 
         if spec_file:
             parts.append(f"## Context: Specification ({spec_file})")
@@ -116,8 +117,9 @@ class CVDPEnv(Env):
         tb_file = None
         for file_path in self.context_files.keys():
             if ('tb' in file_path.lower() or 'test' in file_path.lower()) and file_path != spec_file:
-                tb_file = file_path
-                break
+                if self.context_files[file_path] is not None:
+                    tb_file = file_path
+                    break
 
         if tb_file:
             parts.append(f"## Context: Testbench ({tb_file})")
@@ -128,7 +130,7 @@ class CVDPEnv(Env):
 
         # Priority 3: Include any other documentation
         for file_path, content in self.context_files.items():
-            if file_path not in [spec_file, tb_file]:
+            if file_path not in [spec_file, tb_file] and content is not None:
                 # Skip RTL template files (usually empty placeholders)
                 if file_path.startswith('rtl/') and len(content.strip()) < 100:
                     continue
@@ -152,6 +154,9 @@ class CVDPEnv(Env):
 
         # Write context files (docs, verif, rtl templates, etc.)
         for file_path, content in self.context_files.items():
+            # Skip None values (dataset may have cross-references)
+            if content is None:
+                continue
             full_path = os.path.join(problem_workspace, file_path)
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
             with open(full_path, 'w') as f:
@@ -286,6 +291,10 @@ class CVDPEnv(Env):
 
         # Write harness files
         for file_path, content in self.harness_config.items():
+            # Skip None values (dataset may have cross-references)
+            if content is None:
+                continue
+
             full_path = os.path.join(harness_dir, file_path)
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
 
