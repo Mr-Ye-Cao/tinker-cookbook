@@ -15,7 +15,6 @@ import tinker
 from tinker_cookbook import renderers
 from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.rl.types import Action, Env, Observation, StepResult
-from tinker_cookbook.utils import logtree
 
 logger = logging.getLogger(__name__)
 
@@ -193,9 +192,9 @@ class CVDPEnv(Env):
         # Add enriched user prompt
         convo.append({"role": "user", "content": enriched_prompt})
 
-        logtree.log_text(f"Problem: {self.problem_id}")
-        logtree.log_text(f"Total prompt length: {len(enriched_prompt)} chars")
-        logtree.log_text(f"Context files included: {len(self.context_files)}")
+        logger.info(f"Problem: {self.problem_id}")
+        logger.info(f"Total prompt length: {len(enriched_prompt)} chars")
+        logger.info(f"Context files included: {len(self.context_files)}")
 
         return self.renderer.build_generation_prompt(convo), self.stop_condition
 
@@ -213,13 +212,13 @@ class CVDPEnv(Env):
         message, parse_success = self.renderer.parse_response(action)
         generated_text = message["content"]
 
-        logtree.log_text(f"Generated response length: {len(generated_text)} chars")
+        logger.info(f"Generated response length: {len(generated_text)} chars")
 
         # 2. Extract Verilog/SystemVerilog code
         verilog_code = self._extract_verilog(generated_text)
 
         if verilog_code is None:
-            logtree.log_text("❌ Format Error: No Verilog code block found")
+            logger.info("❌ Format Error: No Verilog code block found")
             return StepResult(
                 reward=0.0,
                 episode_done=True,
@@ -233,7 +232,7 @@ class CVDPEnv(Env):
                 }
             )
 
-        logtree.log_text(f"✓ Extracted Verilog code: {len(verilog_code)} chars")
+        logger.info(f"✓ Extracted Verilog code: {len(verilog_code)} chars")
 
         # 3. Write generated code to workspace
         rtl_file_path = self._get_rtl_target_path()
@@ -244,7 +243,7 @@ class CVDPEnv(Env):
         with open(full_rtl_path, 'w') as f:
             f.write(verilog_code)
 
-        logtree.log_text(f"Wrote code to: {rtl_file_path}")
+        logger.info(f"Wrote code to: {rtl_file_path}")
 
         # 4. Run CVDP evaluation
         eval_result = await self._run_cvdp_evaluation(problem_workspace)
@@ -253,7 +252,7 @@ class CVDPEnv(Env):
         reward = self._calculate_reward(eval_result)
 
         # Log results
-        logtree.log_text(
+        logger.info(
             f"Evaluation: format={eval_result['format_valid']}, "
             f"syntax={eval_result['syntax_valid']}, "
             f"tests_passed={eval_result['tests_passed']}, "
