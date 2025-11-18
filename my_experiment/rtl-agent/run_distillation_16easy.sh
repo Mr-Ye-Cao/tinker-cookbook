@@ -5,6 +5,7 @@ set -e
 
 echo "====================================================================="
 echo "RTL Agent - On-Policy Distillation (16 Easy Problems)"
+echo "Teacher: openai/gpt-oss-120b → Student: openai/gpt-oss-20b"
 echo "====================================================================="
 
 source venv/bin/activate
@@ -16,19 +17,19 @@ LOG_DIR="./logs/distill_16easy_${TIMESTAMP}"
 WORKSPACE_DIR="./workspaces/workspace_16easy_${TIMESTAMP}"
 
 echo "Dataset: $DATASET_PATH (16 problems, divisible by batch_size=2)"
-echo "Configuration: batch_size=2, group_size=2"
+echo "Configuration: batch_size=2, group_size=2, max_tokens=8192, kl_coef=0.7"
 echo "Expected batches: 16/2 = 8 (all complete, no partial batches)"
 echo ""
 
 python train_distillation.py \
   cvdp_jsonl_path="$DATASET_PATH" \
-  student_model=Qwen/Qwen3-30B-A3B-Instruct-2507 \
-  teacher_model=Qwen/Qwen3-235B-A22B-Instruct-2507 \
+  student_model=openai/gpt-oss-20b \
+  teacher_model=openai/gpt-oss-120b \
   batch_size=2 \
   group_size=2 \
   learning_rate=1e-4 \
-  max_tokens=4096 \
-  kl_penalty_coef=0.5 \
+  max_tokens=8192 \
+  kl_penalty_coef=0.7 \
   lora_rank=32 \
   workspace_dir="$WORKSPACE_DIR" \
   log_path="$LOG_DIR" \
