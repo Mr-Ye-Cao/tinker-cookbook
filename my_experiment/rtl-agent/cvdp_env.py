@@ -127,13 +127,21 @@ class CVDPEnv(Env):
             parts.append("")
             logger.info(f"Including testbench: {tb_file} ({len(self.context_files[tb_file])} chars)")
 
-        # Priority 3: Include any other documentation
+        # Priority 3: Include RTL files (for bug-fix tasks where model needs to see existing code)
+        rtl_files_included = []
         for file_path, content in self.context_files.items():
             if file_path not in [spec_file, tb_file] and content is not None:
-                # Skip RTL template files (usually empty placeholders)
-                if file_path.startswith('rtl/') and len(content.strip()) < 100:
-                    continue
+                if file_path.startswith('rtl/') and len(content.strip()) >= 100:
+                    parts.append(f"## Context: Existing RTL ({file_path})")
+                    parts.append("")
+                    parts.append(content)
+                    parts.append("")
+                    logger.info(f"Including RTL file: {file_path} ({len(content)} chars)")
+                    rtl_files_included.append(file_path)
 
+        # Priority 4: Include any other documentation
+        for file_path, content in self.context_files.items():
+            if file_path not in [spec_file, tb_file] + rtl_files_included and content is not None:
                 # Include other documentation
                 if file_path.startswith('docs/') or 'readme' in file_path.lower():
                     parts.append(f"## Context: {file_path}")
@@ -187,14 +195,38 @@ class CVDPEnv(Env):
         # Add system message if available
         if self.system_message:
             convo.append({"role": "system", "content": self.system_message})
-            logger.info(f"Including system message ({len(self.system_message)} chars)")
 
         # Add enriched user prompt
         convo.append({"role": "user", "content": enriched_prompt})
 
-        logger.info(f"Problem: {self.problem_id}")
-        logger.info(f"Total prompt length: {len(enriched_prompt)} chars")
+        # ============================================================================
+        # LOG THE COMPLETE PROMPT TO THE AGENT
+        # ============================================================================
+        logger.info("=" * 100)
+        logger.info("COMPLETE PROMPT TO AGENT - START")
+        logger.info("=" * 100)
+        logger.info(f"Problem ID: {self.problem_id}")
+        logger.info(f"Total conversation messages: {len(convo)}")
         logger.info(f"Context files included: {len(self.context_files)}")
+        logger.info("-" * 100)
+        
+        # Log each message in the conversation
+        for i, msg in enumerate(convo):
+            role = msg["role"].upper()
+            content = msg["content"]
+            logger.info(f"\n{'#' * 100}")
+            logger.info(f"MESSAGE {i+1}/{len(convo)} - ROLE: {role}")
+            logger.info(f"Length: {len(content)} characters")
+            logger.info(f"{'#' * 100}")
+            logger.info(f"\n{content}\n")
+            logger.info(f"{'#' * 100}")
+            logger.info(f"END MESSAGE {i+1}/{len(convo)} - ROLE: {role}")
+            logger.info(f"{'#' * 100}\n")
+        
+        logger.info("=" * 100)
+        logger.info("COMPLETE PROMPT TO AGENT - END")
+        logger.info("=" * 100)
+        # ============================================================================
 
         return self.renderer.build_generation_prompt(convo), self.stop_condition
 
@@ -212,13 +244,31 @@ class CVDPEnv(Env):
         message, parse_success = self.renderer.parse_response(action)
         generated_text = message["content"]
 
-        logger.info(f"Generated response length: {len(generated_text)} chars")
+        # ============================================================================
+        # LOG THE COMPLETE MODEL RESPONSE
+        # ============================================================================
+        logger.info("=" * 100)
+        logger.info("COMPLETE MODEL RESPONSE - START")
+        logger.info("=" * 100)
+        logger.info(f"Problem ID: {self.problem_id}")
+        logger.info(f"Response length: {len(generated_text)} characters")
+        logger.info(f"Token count: {len(action)} tokens")
+        logger.info(f"Parse success: {parse_success}")
+        logger.info(f"{'#' * 100}")
+        logger.info(f"\n{generated_text}\n")
+        logger.info(f"{'#' * 100}")
+        logger.info("=" * 100)
+        logger.info("COMPLETE MODEL RESPONSE - END")
+        logger.info("=" * 100)
+        # ============================================================================
 
         # 2. Extract Verilog/SystemVerilog code
         verilog_code = self._extract_verilog(generated_text)
 
         if verilog_code is None:
-            logger.info("❌ Format Error: No Verilog code block found")
+            logger.info("=" * 100)
+            logger.info("❌ FORMAT ERROR: No Verilog code block found in response")
+            logger.info("=" * 100)
             return StepResult(
                 reward=0.0,
                 episode_done=True,
@@ -232,7 +282,20 @@ class CVDPEnv(Env):
                 }
             )
 
-        logger.info(f"✓ Extracted Verilog code: {len(verilog_code)} chars")
+        # ============================================================================
+        # LOG THE EXTRACTED VERILOG CODE
+        # ============================================================================
+        logger.info("=" * 100)
+        logger.info("EXTRACTED VERILOG CODE - START")
+        logger.info("=" * 100)
+        logger.info(f"Code length: {len(verilog_code)} characters")
+        logger.info(f"{'#' * 100}")
+        logger.info(f"\n{verilog_code}\n")
+        logger.info(f"{'#' * 100}")
+        logger.info("=" * 100)
+        logger.info("EXTRACTED VERILOG CODE - END")
+        logger.info("=" * 100)
+        # ============================================================================
 
         # 3. Write generated code to workspace
         rtl_file_path = self._get_rtl_target_path()
@@ -251,13 +314,25 @@ class CVDPEnv(Env):
         # 5. Calculate reward
         reward = self._calculate_reward(eval_result)
 
-        # Log results
-        logger.info(
-            f"Evaluation: format={eval_result['format_valid']}, "
-            f"syntax={eval_result['syntax_valid']}, "
-            f"tests_passed={eval_result['tests_passed']}, "
-            f"reward={reward:.2f}"
-        )
+        # ============================================================================
+        # LOG EVALUATION RESULTS
+        # ============================================================================
+        logger.info("=" * 100)
+        logger.info("EVALUATION RESULTS")
+        logger.info("=" * 100)
+        logger.info(f"Problem ID: {self.problem_id}")
+        logger.info(f"Format Valid: {eval_result['format_valid']} {'✓' if eval_result['format_valid'] else '✗'}")
+        logger.info(f"Syntax Valid: {eval_result['syntax_valid']} {'✓' if eval_result['syntax_valid'] else '✗'}")
+        logger.info(f"Tests Passed: {eval_result['tests_passed']} {'✓' if eval_result['tests_passed'] else '✗'}")
+        logger.info(f"Pass Rate: {eval_result.get('pass_rate', 0.0):.2%}")
+        logger.info(f"Final Reward: {reward:.4f}")
+        logger.info("-" * 100)
+        logger.info(f"Reward breakdown:")
+        logger.info(f"  Format component:  {self.format_coef} * {int(eval_result['format_valid'])} = {self.format_coef * int(eval_result['format_valid']):.4f}")
+        logger.info(f"  Syntax component:  {self.syntax_coef} * {int(eval_result['syntax_valid'])} = {self.syntax_coef * int(eval_result['syntax_valid']):.4f}")
+        logger.info(f"  Test component:    {self.test_coef} * {eval_result.get('pass_rate', 0.0):.2f} = {self.test_coef * eval_result.get('pass_rate', 0.0):.4f}")
+        logger.info("=" * 100)
+        # ============================================================================
 
         return StepResult(
             reward=reward,
