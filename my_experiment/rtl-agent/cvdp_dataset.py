@@ -43,6 +43,7 @@ class CVDPDataset(RLDataset):
         syntax_coef: float = 0.3,
         test_coef: float = 1.0,
         dataset_name: str = "cvdp",
+        override_system_message: str | None = None,
     ):
         """
         Args:
@@ -57,6 +58,7 @@ class CVDPDataset(RLDataset):
             syntax_coef: Reward coefficient for syntax validity
             test_coef: Reward coefficient for passing tests
             dataset_name: Name for logging/metrics
+            override_system_message: If provided, use this instead of JSONL system_message
         """
         self.problems = problems
         self.batch_size = batch_size
@@ -69,6 +71,7 @@ class CVDPDataset(RLDataset):
         self.syntax_coef = syntax_coef
         self.test_coef = test_coef
         self.dataset_name = dataset_name
+        self.override_system_message = override_system_message
 
         logger.info(
             f"Loaded CVDP dataset: {len(problems)} problems, "
@@ -91,6 +94,9 @@ class CVDPDataset(RLDataset):
         env_group_builders = []
 
         for problem in self.problems[batch_start:batch_end]:
+            # Use override system message if provided, otherwise use JSONL's system message
+            system_message = self.override_system_message if self.override_system_message is not None else problem.get("system_message")
+            
             # Create environment builder for this problem
             env_builder = ProblemGroupBuilder(
                 env_thunk=partial(
@@ -99,7 +105,7 @@ class CVDPDataset(RLDataset):
                     prompt=problem["prompt"],
                     context_files=problem.get("context", {}),
                     harness_config=problem.get("harness", {}),
-                    system_message=problem.get("system_message"),
+                    system_message=system_message,
                     workspace_dir=self.workspace_dir,
                     renderer=self.renderer,
                     oss_sim_image=self.oss_sim_image,
@@ -143,6 +149,7 @@ class CVDPDatasetBuilder(RLDatasetBuilder):
     syntax_coef: float = 0.3
     test_coef: float = 1.0
     dataset_name: str = "cvdp"
+    override_system_message: str | None = None  # Override JSONL system_message with this
 
     # Train/test split
     test_split: float = 0.0  # Fraction of problems for test set (0.0 = no test set)
@@ -194,6 +201,7 @@ class CVDPDatasetBuilder(RLDatasetBuilder):
             syntax_coef=self.syntax_coef,
             test_coef=self.test_coef,
             dataset_name=f"{self.dataset_name}_train",
+            override_system_message=self.override_system_message,
         )
 
         # Create test dataset
@@ -211,6 +219,7 @@ class CVDPDatasetBuilder(RLDatasetBuilder):
                 syntax_coef=self.syntax_coef,
                 test_coef=self.test_coef,
                 dataset_name=f"{self.dataset_name}_test",
+                override_system_message=self.override_system_message,
             )
 
         return train_dataset, test_dataset

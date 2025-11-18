@@ -36,6 +36,7 @@ class CLIConfig:
     cvdp_jsonl_path: str = "/path/to/cvdp_v1.0.1_agentic_code_generation_no_commercial.jsonl"
     test_jsonl_path: str | None = None
     test_split: float = 0.0
+    use_oneshot_system_message: bool = True  # Use simple one-shot prompt instead of agentic
 
     # CVDP configuration
     workspace_dir: str = "/tmp/cvdp_workspace"
@@ -104,6 +105,17 @@ async def main(cli_config: CLIConfig):
     # Check log directory
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
 
+    # Load one-shot system message if requested
+    override_system_message = None
+    if cli_config.use_oneshot_system_message:
+        oneshot_msg_path = os.path.join(os.path.dirname(__file__), "ONESHOT_SYSTEM_MESSAGE.txt")
+        if os.path.exists(oneshot_msg_path):
+            with open(oneshot_msg_path, 'r') as f:
+                override_system_message = f.read().strip()
+            logger.info(f"Using one-shot system message from {oneshot_msg_path}")
+        else:
+            logger.warning(f"One-shot message file not found: {oneshot_msg_path}, using JSONL system message")
+
     # Create CVDP dataset builder
     dataset_builder = CVDPDatasetBuilder(
         cvdp_jsonl_path=cli_config.cvdp_jsonl_path,
@@ -119,6 +131,7 @@ async def main(cli_config: CLIConfig):
         test_coef=cli_config.test_coef,
         test_jsonl_path=cli_config.test_jsonl_path,
         test_split=cli_config.test_split,
+        override_system_message=override_system_message,
     )
 
     # Create teacher config
