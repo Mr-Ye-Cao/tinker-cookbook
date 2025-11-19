@@ -16,13 +16,32 @@ Available tools installed in this environment:
 - pytest: Python test runner (used with cocotb)
 - python3: Python 3.9+ for running tests
 
-You can interact with this environment by executing shell commands. Format your commands clearly using one of these styles:
-1. Inline code: `cat /code/docs/spec.md`
-2. Code block:
-```bash
-ls -la /code/rtl/
+You can interact with this environment by executing shell commands.
+
+IMPORTANT OUTPUT FORMAT:
+- You MUST output bash/shell commands, NOT Verilog code directly
+- When writing RTL files, use heredoc or echo commands
+- Format your commands using one of these styles:
+  1. Inline code: `cat /code/docs/spec.md`
+  2. Code block with bash tag:
+  ```bash
+  ls -la /code/rtl/
+  ```
+  3. Direct command: ls /code/rtl/
+
+WRONG - DO NOT output raw Verilog:
+```verilog
+module foo(...);
+endmodule
 ```
-3. Direct command: ls /code/rtl/
+
+CORRECT - Use heredoc to write Verilog to a file:
+```bash
+cat > /code/rtl/foo.sv << 'EOF'
+module foo(...);
+endmodule
+EOF
+```
 
 WORKFLOW: Follow this systematic approach to solve hardware design tasks:
 
