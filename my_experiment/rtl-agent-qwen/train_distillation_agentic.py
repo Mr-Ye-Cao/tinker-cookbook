@@ -46,7 +46,7 @@ class CLIConfig:
 
     # CVDP agentic configuration
     workspace_dir: str = "/tmp/cvdp_agentic_workspace"
-    docker_image: str = "ghcr.io/peter-shen-simpleai/gpt-oss-20b-agent-base:latest"
+    docker_image: str = "gpt-oss-20b-agent-base:latest"
     timeout_seconds: int = 600
     max_turns: int = 50
 

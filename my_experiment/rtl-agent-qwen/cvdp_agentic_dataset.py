@@ -37,7 +37,7 @@ class CVDPAgenticDataset(RLDataset):
         group_size: int,
         renderer: renderers.Renderer,
         workspace_dir: str,
-        docker_image: str = "ghcr.io/peter-shen-simpleai/gpt-oss-20b-agent-base:latest",
+        docker_image: str = "gpt-oss-20b-agent-base:latest",
         timeout_seconds: int = 600,
         max_turns: int = 50,
         format_coef: float = 0.1,

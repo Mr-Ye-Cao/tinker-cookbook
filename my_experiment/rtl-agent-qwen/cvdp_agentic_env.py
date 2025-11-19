@@ -58,7 +58,7 @@ class CVDPAgenticEnv(Env):
         workspace_dir: str,
         renderer: renderers.Renderer,
         system_message: str | None = None,
-        docker_image: str = "ghcr.io/peter-shen-simpleai/gpt-oss-20b-agent-base:latest",
+        docker_image: str = "gpt-oss-20b-agent-base:latest",
         timeout_seconds: int = 600,
         max_turns: int = 50,
         format_coef: float = 0.1,

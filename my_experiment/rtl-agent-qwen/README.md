@@ -105,15 +105,21 @@ Max reward = 1.4
    pip install -r requirements.txt
    ```
 
-3. **Docker Image**: Pull the agentic base image
+3. **Docker Image**: Build or verify the agentic base image exists
    ```bash
-   docker pull ghcr.io/peter-shen-simpleai/gpt-oss-20b-agent-base:latest
+   # Check if image exists
+   docker images | grep gpt-oss-20b-agent-base
+
+   # If not found, build it:
+   cd /home/ubuntu/peter/benchmark/cvdp_benchmark/gpt-oss-20b-qwen-code-agent
+   ./build.sh
    ```
 
    This image includes:
    - iverilog (Icarus Verilog)
    - cocotb (Python testbench framework)
    - pytest
+   - qwen-code CLI
    - Other HDL tools
 
 4. **Tinker API Key**: Set environment variable
@@ -167,7 +173,7 @@ python train_distillation_agentic.py \
 **Agentic Configuration:**
 - `max_turns`: Maximum turns per episode (default: 50)
 - `max_tokens`: Max tokens per episode (default: 16384)
-- `docker_image`: Docker image for execution (default: gpt-oss-20b-agent-base)
+- `docker_image`: Docker image for execution (default: gpt-oss-20b-agent-base:latest)
 - `timeout_seconds`: Command execution timeout (default: 600)
 
 **Training Hyperparameters:**
@@ -319,8 +325,12 @@ Per-episode metrics:
 # Check Docker is running
 docker ps
 
-# Pull image manually
-docker pull ghcr.io/peter-shen-simpleai/gpt-oss-20b-agent-base:latest
+# Check if image exists
+docker images | grep gpt-oss-20b-agent-base
+
+# If not found, build it:
+cd /home/ubuntu/peter/benchmark/cvdp_benchmark/gpt-oss-20b-qwen-code-agent
+./build.sh
 
 # Clean up old containers
 docker container prune

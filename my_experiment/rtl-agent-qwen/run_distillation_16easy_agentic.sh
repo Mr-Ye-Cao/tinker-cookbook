@@ -44,13 +44,19 @@ echo "  Batch size: 2 (smaller for multi-turn)"
 echo "  Group size: 2 (GRPO-style)"
 echo "  Max tokens: 16384 (larger for multi-turn conversations)"
 echo "  KL penalty coefficient: 0.7"
-echo "  Docker image: ghcr.io/peter-shen-simpleai/gpt-oss-20b-agent-base:latest"
+echo "  Docker image: gpt-oss-20b-agent-base:latest"
 echo ""
 
 # Check Docker image availability
 echo "Checking Docker image availability..."
-docker pull ghcr.io/peter-shen-simpleai/gpt-oss-20b-agent-base:latest || \
-    echo "Warning: Failed to pull Docker image. Using cached version if available."
+if ! docker images | grep -q "gpt-oss-20b-agent-base"; then
+    echo "Error: Docker image 'gpt-oss-20b-agent-base:latest' not found!"
+    echo "Please build it first:"
+    echo "  cd /home/ubuntu/peter/benchmark/cvdp_benchmark/gpt-oss-20b-qwen-code-agent"
+    echo "  ./build.sh"
+    exit 1
+fi
+echo "Docker image found locally."
 
 echo ""
 echo "Starting training..."
@@ -67,7 +73,7 @@ python train_distillation_agentic.py \
   max_turns=50 \
   kl_penalty_coef=0.7 \
   lora_rank=32 \
-  docker_image=ghcr.io/peter-shen-simpleai/gpt-oss-20b-agent-base:latest \
+  docker_image=gpt-oss-20b-agent-base:latest \
   workspace_dir="$WORKSPACE_DIR" \
   log_path="$LOG_DIR" \
   eval_every=5 \
