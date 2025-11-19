@@ -1,0 +1,11 @@
+# Tinker and core dependencies
+tinker>=0.3.0
+tinker-cookbook
+
+# Docker is required for CVDP evaluation
+# Install via: https://docs.docker.com/get-docker/
+
+# Optional: for visualization and analysis
+jupyter
+matplotlib
+pandas
