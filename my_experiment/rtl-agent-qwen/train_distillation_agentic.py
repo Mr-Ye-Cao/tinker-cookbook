@@ -59,7 +59,7 @@ class CLIConfig:
     batch_size: int = 4  # Smaller batch size for multi-turn (more tokens per episode)
     group_size: int = 2  # Fewer rollouts for distillation
     learning_rate: float = 1e-4
-    max_tokens: int = 16384  # Larger for multi-turn conversations
+    max_tokens: int = 4096  # Per turn (context accumulates across turns)
 
     # Distillation hyperparameters
     kl_penalty_coef: float = 1.0

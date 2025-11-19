@@ -359,13 +359,18 @@ class CVDPAgenticEnv(Env):
         logger.info("=" * 100)
         logger.info(f"Model response ({len(generated_text)} chars):")
         logger.info("-" * 100)
-        logger.info(generated_text[:500])
-        if len(generated_text) > 500:
-            logger.info(f"... ({len(generated_text) - 500} more chars)")
+        logger.info(generated_text)  # Full output
         logger.info("=" * 100)
 
-        # Add assistant message to conversation history
-        self.conversation_history.append({"role": "assistant", "content": generated_text})
+        # Add assistant message to conversation history (truncate if very long)
+        # Limit assistant responses to prevent context overflow
+        max_assistant_chars = 10000000  # Effectively disabled
+        if len(generated_text) > max_assistant_chars:
+            truncated_text = generated_text[:max_assistant_chars] + "\n\n[... Response truncated for brevity ...]"
+            logger.warning(f"Truncated long assistant response: {len(generated_text)} chars -> {len(truncated_text)} chars")
+            self.conversation_history.append({"role": "assistant", "content": truncated_text})
+        else:
+            self.conversation_history.append({"role": "assistant", "content": generated_text})
 
         # Extract command from model output
         command = extract_command_from_text(generated_text)
@@ -387,13 +392,11 @@ class CVDPAgenticEnv(Env):
 
         # Format observation
         observation_text = format_command_observation(command, stdout, stderr, returncode)
-        observation_text = truncate_output(observation_text, max_chars=8000)
+        observation_text = truncate_output(observation_text, max_chars=10000000)  # Effectively disabled
 
         logger.info("Command execution result:")
         logger.info("-" * 100)
-        logger.info(observation_text[:500])
-        if len(observation_text) > 500:
-            logger.info(f"... ({len(observation_text) - 500} more chars)")
+        logger.info(observation_text)  # Full output
         logger.info("=" * 100)
 
         # Check if episode should end
@@ -416,8 +419,19 @@ class CVDPAgenticEnv(Env):
         Returns:
             StepResult with episode_done=False
         """
-        # Add observation to conversation history
+        # Add observation to conversation history (already truncated in format_command_observation)
         self.conversation_history.append({"role": "user", "content": observation_text})
+
+        # Manage conversation history length to prevent context overflow
+        # Keep system message + first user message + recent N turns
+        if len(self.conversation_history) > 15:  # System + User + 6-7 turns (each turn = assistant + user)
+            # Keep: [0]=system, [1]=initial_user, [...]=recent turns
+            system_msg = self.conversation_history[0]
+            initial_user = self.conversation_history[1]
+            recent_turns = self.conversation_history[-10:]  # Last 5 assistant+user pairs
+
+            self.conversation_history = [system_msg, initial_user] + recent_turns
+            logger.info(f"Truncated conversation history to prevent context overflow: kept {len(recent_turns)} recent messages")
 
         # Build next observation
         next_obs = self.renderer.build_generation_prompt(self.conversation_history)
