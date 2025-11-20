@@ -20,6 +20,7 @@ import chz
 from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.distillation import train_on_policy
 from tinker_cookbook.distillation.datasets import DistillationDatasetConfig, TeacherConfig
+from tinker_cookbook.utils import ml_log
 
 from cvdp_agentic_dataset import CVDPAgenticDatasetBuilder
 
@@ -113,6 +114,15 @@ async def main(cli_config: CLIConfig):
     # Check log directory
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
 
+    # Create log directory if it doesn't exist
+    os.makedirs(log_path, exist_ok=True)
+
+    # Set up logging to file early so all messages are captured
+    ml_log.configure_logging_module(os.path.join(log_path, "logs.log"))
+    logger.info("=" * 80)
+    logger.info("RTL Code Generation - Agentic On-Policy Distillation")
+    logger.info("=" * 80)
+
     # Load agentic system message
     agentic_msg_path = os.path.join(os.path.dirname(__file__), "AGENTIC_SYSTEM_MESSAGE.txt")
     if os.path.exists(agentic_msg_path):
@@ -175,9 +185,6 @@ async def main(cli_config: CLIConfig):
         save_every=cli_config.save_every,
     )
 
-    logger.info("=" * 80)
-    logger.info("RTL Code Generation - Agentic On-Policy Distillation")
-    logger.info("=" * 80)
     logger.info(f"Student: {cli_config.student_model}")
     logger.info(f"Teacher: {cli_config.teacher_model}")
     logger.info(f"Dataset: {cli_config.cvdp_jsonl_path}")
