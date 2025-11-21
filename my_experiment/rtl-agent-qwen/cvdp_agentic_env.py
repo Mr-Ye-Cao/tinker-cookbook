@@ -11,6 +11,10 @@ import logging
 import os
 import re
 from typing import Dict, Optional, List
+try:
+    from openai_harmony import load_harmony_encoding, HarmonyEncodingName, Role
+except ImportError:
+    pass
 
 import tinker
 from tinker_cookbook import renderers
@@ -18,7 +22,7 @@ from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.rl.types import Action, Env, Observation, StepResult
 
 from utils import (
-    extract_command_from_text,
+    extract_command_from_messages,
     validate_command_safety,
     format_command_observation,
     truncate_output,
@@ -373,8 +377,55 @@ class CVDPAgenticEnv(Env):
             self.conversation_history.append({"role": "assistant", "content": generated_text})
 
         # Extract command from model output
-        command = extract_command_from_text(generated_text)
+        # Use Harmony parser to extract command from generated text
+        try:
+            enc = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
+            tokens = enc.encode(generated_text, allowed_special="all")
+            
+            # Robustness fix: Try to parse from each <|start|> token (200006)
+            # This handles cases where the model outputs text before the message,
+            # or hallucinates invalid <|start|> tokens.
+            start_token = 200006
+            start_indices = [i for i, t in enumerate(tokens) if t == start_token]
+            
+            if not start_indices:
+                # No start token found, try parsing as is (will likely fail or return empty)
+                parsed_messages = enc.parse_messages_from_completion_tokens(tokens, role=Role.ASSISTANT, strict=False)
+                command = extract_command_from_messages(parsed_messages)
+            else:
+                command = None
+                # Try each start position until we find a valid command
+                for i in start_indices:
+                    try:
+                        current_tokens = tokens[i:]
+                        parsed_messages = enc.parse_messages_from_completion_tokens(current_tokens, role=Role.ASSISTANT, strict=False)
+                        cmd = extract_command_from_messages(parsed_messages)
+                        if cmd:
+                            command = cmd
+                            break
+                        # If parsed but no command, maybe it's a final answer?
+                        # We keep the last valid parse result if no command found yet
+                    except Exception:
+                        continue
+                
+                # If we didn't find a command, but we parsed something successfully, we might want to return that?
+                # But extract_command_from_messages returns None if no command.
+                # If all attempts failed to produce a command, command is None.
 
+        except Exception as e:
+            logger.error(f"Failed to parse command with Harmony: {e}")
+            command = None
+
+        if command is None:
+            # Fallback: Check if the model output a bash code block in the text (even if in final answer)
+            # This handles cases where the model forgets to use the tool but provides the code.
+            import re
+            bash_block_pattern = re.compile(r"```bash\s*\n(.*?)\n```", re.DOTALL)
+            match = bash_block_pattern.search(generated_text)
+            if match:
+                command = match.group(1).strip()
+                logger.warning("Fallback: Extracted command from markdown block despite missing tool call.")
+            
         if command is None:
             # No command found - treat as final answer attempt
             logger.info("No command found in response - checking for final answer")
@@ -510,7 +561,6 @@ class CVDPAgenticEnv(Env):
                 "tests_passed": float(eval_result["tests_passed"]),
                 "pass_rate": eval_result.get("pass_rate", 0.0),
                 "turns_used": self.current_turn,
-                "end_reason": reason,
             }
         )
 
