@@ -8,184 +8,40 @@ Includes:
 """
 
 import re
+import json
 import logging
 from typing import Optional, List, Tuple
 try:
-    from openai_harmony import load_harmony_encoding, HarmonyEncodingName, Role
+    from openai_harmony import load_harmony_encoding, HarmonyEncodingName, Role, Message
 except ImportError:
     pass
 
 logger = logging.getLogger(__name__)
 
 
-def extract_command_from_text(text: str) -> Optional[str]:
+def extract_command_from_messages(messages: List[Message]) -> Optional[str]:
     """
     Extract bash command from model's generated text.
 
-    Supports multiple formats:
-    1. Markdown code blocks: ```bash\ncommand\n```
-    2. Inline code: `command`
-    3. Direct command in text
-
     Args:
-        text: Model's generated text
+        messages: Parsed messages from harmony encoding
 
     Returns:
-        Extracted command string, or None if no command found
+        The bash command string if a tool call was detected, None otherwise
     """
-    # Keep original text for Harmony parsing
-    original_text = text
-
-    # Remove leading/trailing whitespace
-    text = text.strip()
-
-    if not text:
-        return None
-
-    # Priority 0: Use OpenAI Harmony Parser if available
-    try:
-        # Use global encoding if available
-        if 'enc' not in globals():
-             enc = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
-        else:
-             enc = globals()['enc']
-
-        # Encode original text to tokens (allowing special tokens)
-        # We use the original text because Harmony needs the special tokens (<|start|>, <|channel|>, etc.)
-        # that might be stripped by regex cleanup.
-        tokens = enc.encode(original_text, allowed_special="all")
-        
-        # Parse messages with strict=False to handle malformed output
-        parsed_messages = enc.parse_messages_from_completion_tokens(tokens, role=Role.ASSISTANT, strict=False)
-        
-        for msg in parsed_messages:
-            # Check for analysis channel with container.exec recipient
-            if msg.channel == 'analysis':
-                # Extract content
-                if hasattr(msg, 'content') and isinstance(msg.content, list):
-                    for content_item in msg.content:
-                        if hasattr(content_item, 'text'):
-                            text_content = content_item.text
-                            # Try to parse as JSON command
-                            try:
-                                import json
-                                data = json.loads(text_content)
-                                if "cmd" in data and isinstance(data["cmd"], list):
-                                    cmd_list = data["cmd"]
-                                    if len(cmd_list) > 0:
-                                        command = cmd_list[-1]
-                                        logger.debug(f"Extracted command from Harmony parser (JSON): {command[:100]}")
-                                        return command
-                            except json.JSONDecodeError:
-                                pass
-            
-            # Check for code blocks in 'final' channel or any channel if no JSON found
-            if hasattr(msg, 'content') and isinstance(msg.content, list):
-                 for content_item in msg.content:
-                        if hasattr(content_item, 'text'):
-                            text_content = content_item.text
-                            # Look for code blocks
-                            code_block_pattern = r'```(?:bash|sh|shell)\s*\n(.*?)\n```'
-                            code_blocks = re.findall(code_block_pattern, text_content, re.DOTALL | re.IGNORECASE)
-                            if code_blocks:
-                                command = "\n".join(block.strip() for block in code_blocks)
-                                logger.debug(f"Extracted {len(code_blocks)} command blocks from Harmony message: {command[:100]}...")
-                                return command
-
-        # If Harmony parsed successfully but found no command, we should return None
-        if parsed_messages:
-             logger.debug("Harmony parsed messages but no command found.")
-             return None
-            
-    except ImportError:
-        logger.warning("openai-harmony not installed, falling back to regex parsing")
-    except Exception as e:
-        logger.debug(f"Harmony parsing failed: {e}")
-
-    # Fallback Regex Parsing (only if Harmony failed or not installed)
-    # Strip internal thought tokens for regex parsing
-    # Remove <|channel|>...<|message|> sequences
-    text = re.sub(r'<\|channel\|>.*?<\|message\|>', '', text)
-    # Remove <|end|> and <|start|> tokens
-    text = re.sub(r'<\|end\|>', '', text)
-    text = re.sub(r'<\|start\|>', '', text)
-    
-    # Clean up any remaining "assistant" or "user" labels that might be left
-    text = re.sub(r'^\s*assistant\s*', '', text)
-    text = text.strip()
-
-    if not text:
-        return None
-
-    # Priority 0.5: Fallback regex for JSON command format (if Harmony fails or not installed)
-    # This is common in some agent training data
-    try:
-        # Find JSON-like structure
-        json_match = re.search(r'\{.*"cmd"\s*:\s*\[.*\]\s*\}', text, re.DOTALL)
-        if json_match:
-            import json
-            json_str = json_match.group(0)
-            data = json.loads(json_str)
-            if "cmd" in data and isinstance(data["cmd"], list):
-                # The command is usually the last argument to bash -c
-                # e.g. ["bash", "-lc", "ACTUAL_COMMAND"]
-                cmd_list = data["cmd"]
-                if len(cmd_list) > 0:
-                    command = cmd_list[-1]
-                    logger.debug(f"Extracted command from JSON: {command[:100]}")
-                    return command
-    except Exception as e:
-        logger.debug(f"Failed to parse JSON command: {e}")
-
-    # Priority 1: Markdown code blocks with bash/sh/shell tags ONLY
-    # Match ```bash\ncommand\n``` or ```sh\ncommand\n``` or ```shell\ncommand\n```
-    # NOTE: We explicitly require bash/sh/shell tags to avoid extracting Verilog code blocks
-    code_block_pattern = r'```(?:bash|sh|shell)\s*\n(.*?)\n```'
-    code_blocks = re.findall(code_block_pattern, text, re.DOTALL | re.IGNORECASE)
-    if code_blocks:
-        # Join all code blocks to execute them sequentially
-        # This handles cases where the model writes a file in one block and runs it in another
-        command = "\n".join(block.strip() for block in code_blocks)
-        logger.debug(f"Extracted {len(code_blocks)} command blocks: {command[:100]}...")
-        return command
-
-    # Priority 2: Inline code with backticks: `command`
-    # Look for commands like `ls /code/rtl` or `cat file.txt`
-    inline_code_pattern = r'`([^`]+)`'
-    inline_codes = re.findall(inline_code_pattern, text)
-
-    for code in inline_codes:
-        # Check if it looks like a shell command (starts with common commands)
-        if looks_like_shell_command(code.strip()):
-            command = code.strip()
-            logger.debug(f"Extracted command from inline code: {command[:100]}")
-            return command
-
-    # Priority 3: Direct command (line starts with common shell command)
-    # Split by lines and find the first line that looks like a command
-    lines = text.split('\n')
-    for line in lines:
-        line = line.strip()
-        if line and looks_like_shell_command(line):
-            # Additional check: don't extract Verilog/SystemVerilog code
-            if not looks_like_hdl_code(line):
-                logger.debug(f"Extracted direct command: {line[:100]}")
-                return line
-
-    # Priority 4: If nothing found, check if the entire text is a command
-    # BUT ONLY if it doesn't look like a conversation or analysis
-    # If we stripped tokens earlier, we might have "analysis... assistant..." text left
-    # We should be very conservative here.
-    
-    # Priority 4: Fallback - DISABLED
-    # We do not want to treat arbitrary text as commands.
-    # The model should use code blocks or JSON commands.
-    
-    logger.debug(f"No command found in text: {text[:200]}")
+    for msg in messages:
+        # Check for recipient indicating tool call
+        if msg.recipient and "execute_bash" in msg.recipient:
+            try:
+                if msg.content and len(msg.content) > 0:
+                    content_text = msg.content[0].text
+                    args = json.loads(content_text)
+                    return args.get("command")
+            except (json.JSONDecodeError, AttributeError, KeyError):
+                continue
     return None
 
-    logger.debug(f"No command found in text: {text[:200]}")
-    return None
+
 
 
 def looks_like_hdl_code(text: str) -> bool:

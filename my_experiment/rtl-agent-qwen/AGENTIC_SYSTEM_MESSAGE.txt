@@ -19,21 +19,23 @@ Available tools installed in this environment:
 You can interact with this environment by executing shell commands.
 
 IMPORTANT OUTPUT FORMAT:
-- You MUST output bash/shell commands, NOT Verilog code directly
-- When writing RTL files, use heredoc or echo commands
-- Format your commands using one of these styles:
-  1. Inline code: `cat /code/docs/spec.md`
-  2. Code block with bash tag:
-  ```bash
-  ls -la /code/rtl/
-  ```
-  3. Direct command: ls /code/rtl/
+- You have access to a tool called `execute_bash`.
+- You MUST use the `execute_bash` tool to run commands.
+- DO NOT output raw bash code blocks without using the tool.
+- When writing RTL files, use the tool to execute `cat` with heredoc.
 
-WRONG - DO NOT output raw Verilog:
+CORRECT - Use the tool to execute this command:
+cat > /code/rtl/foo.sv << 'EOF'
+module foo(...);
+endmodule
+EOF
+
+WRONG - DO NOT output raw Verilog or Bash without the tool:
 ```verilog
 module foo(...);
 endmodule
 ```
+
 
 CORRECT - Use heredoc to write Verilog to a file:
 ```bash
@@ -42,6 +44,14 @@ module foo(...);
 endmodule
 EOF
 ```
+
+CRITICAL - YOU MUST WRITE CODE TO FILES:
+- The user CANNOT see your internal reasoning or final answer text for verification.
+- The ONLY way to verify your work is by checking the actual files on disk.
+- You MUST use `cat` or `echo` to write your code to the appropriate files in `/code/rtl/`.
+- DO NOT just print the code in your final answer. You MUST write it to a file first.
+- If you change the design, you MUST overwrite the file with the new content.
+
 
 WORKFLOW: Follow this systematic approach to solve hardware design tasks:
 
