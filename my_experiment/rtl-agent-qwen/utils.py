@@ -30,14 +30,25 @@ def extract_command_from_messages(messages: List[Message]) -> Optional[str]:
         The bash command string if a tool call was detected, None otherwise
     """
     for msg in messages:
-        # Check for recipient indicating tool call
+        # Check for recipient or channel indicating tool call
+        is_tool_call = False
         if msg.recipient and "execute_bash" in msg.recipient:
+            is_tool_call = True
+        elif msg.channel and "execute_bash" in msg.channel:
+            is_tool_call = True
+            
+        if is_tool_call:
             try:
                 if msg.content and len(msg.content) > 0:
                     content_text = msg.content[0].text
-                    args = json.loads(content_text)
-                    return args.get("command")
-            except (json.JSONDecodeError, AttributeError, KeyError):
+                    try:
+                        args = json.loads(content_text)
+                        return args.get("command")
+                    except json.JSONDecodeError:
+                        # Fallback: If not JSON, assume the entire text is the command
+                        # This handles cases where model outputs raw bash code
+                        return content_text.strip()
+            except (AttributeError, KeyError):
                 continue
     return None
 
