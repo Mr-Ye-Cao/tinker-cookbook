@@ -32,12 +32,8 @@ from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.rl.types import Action, Env, Observation, StepResult
 
 from utils import (
-    extract_command_from_messages,
-    validate_command_safety,
     format_command_observation,
-    truncate_output,
-    parse_pytest_output,
-    check_iverilog_success,
+    truncate_output
 )
 
 logger = logging.getLogger(__name__)
@@ -394,6 +390,88 @@ class CVDPAgenticEnv(Env):
         tokens = self.enc.render_conversation_for_completion(convo, Role.ASSISTANT)
         return tinker.ModelInput.from_ints(tokens), self.stop_condition
 
+    def _extract_command_from_text(self, text: str) -> Optional[str]:
+        """
+        Extract bash command from model's generated text using regex patterns.
+
+        This is more reliable than Harmony token parsing for raw model output.
+
+        Args:
+            text: Raw model output text
+
+        Returns:
+            Extracted command string, or None if no command found
+        """
+        command = None
+
+        # Pattern 1: commentary to=functions.execute_bash with JSON (most common)
+        # Format: <|channel|>commentary to=functions.execute_bash <|constrain|>json<|message|>{"command":"..."}
+        func_pattern = re.compile(
+            r"<\|channel\|>commentary to=functions\.execute_bash[^<]*<\|(?:constrain\|>[^<]*<\|)?message\|>(.*?)(?:<\|call\|>|<\|end\|>|$)",
+            re.DOTALL
+        )
+        match = func_pattern.search(text)
+        if match:
+            content = match.group(1).strip()
+            logger.info(f"[extract] Found functions.execute_bash pattern, content: {repr(content[:200] if len(content) > 200 else content)}")
+            try:
+                args = json.loads(content)
+                command = args.get("command")
+                if command:
+                    logger.info(f"[extract] Extracted command from JSON: {repr(command[:100] if len(command) > 100 else command)}")
+                    return command
+            except json.JSONDecodeError as e:
+                logger.info(f"[extract] JSON decode failed: {e}, trying raw content")
+                # If not valid JSON, use raw content as command
+                if content and not content.startswith('{'):
+                    command = content
+                    logger.info(f"[extract] Using raw content as command: {repr(command[:100] if len(command) > 100 else command)}")
+                    return command
+
+        # Pattern 2: analysis to=functions.execute_bash (alternate format)
+        analysis_pattern = re.compile(
+            r"<\|channel\|>analysis to=functions\.execute_bash[^<]*<\|(?:constrain\|>[^<]*<\|)?message\|>(.*?)(?:<\|call\|>|<\|end\|>|$)",
+            re.DOTALL
+        )
+        match = analysis_pattern.search(text)
+        if match:
+            content = match.group(1).strip()
+            logger.info(f"[extract] Found analysis to=functions.execute_bash pattern")
+            try:
+                args = json.loads(content)
+                command = args.get("command")
+                if command:
+                    return command
+            except json.JSONDecodeError:
+                if content and not content.startswith('{'):
+                    return content
+
+        # Pattern 3: Malformed tags (analysis to=execute_bash code)
+        malformed_pattern = re.compile(
+            r"<\|channel\|>analysis to=execute_bash code<\|message\|>(.*?)(?:<\|end\|>|$)",
+            re.DOTALL
+        )
+        match = malformed_pattern.search(text)
+        if match:
+            content = match.group(1).strip()
+            logger.info(f"[extract] Found malformed pattern")
+            try:
+                args = json.loads(content)
+                return args.get("command")
+            except json.JSONDecodeError:
+                return content
+
+        # Pattern 4: Markdown bash code block
+        bash_block_pattern = re.compile(r"```bash\s*\n(.*?)\n```", re.DOTALL)
+        match = bash_block_pattern.search(text)
+        if match:
+            command = match.group(1).strip()
+            logger.info(f"[extract] Found markdown bash block: {repr(command[:100] if len(command) > 100 else command)}")
+            return command
+
+        logger.info("[extract] No command pattern found in text")
+        return None
+
     async def step(self, action: Action) -> StepResult:
         """
         Execute one turn of the agentic loop.
@@ -419,130 +497,21 @@ class CVDPAgenticEnv(Env):
         logger.info("-" * 100)
         logger.info(generated_text)  # Full output
         logger.info("=" * 100)
-        
-        # Parse messages from generated text to handle tool calls correctly
-        tokens = self.enc.encode(generated_text, allowed_special="all")
-        logger.info(f"[step] Encoded generated_text to {len(tokens)} tokens")
 
-        # Debug: Show first and last few tokens
-        if len(tokens) > 0:
-            first_tokens = tokens[:20]
-            last_tokens = tokens[-20:] if len(tokens) > 20 else []
-            logger.info(f"[step] First 20 tokens: {first_tokens}")
-            logger.info(f"[step] Last 20 tokens: {last_tokens}")
-
-        command = None
-        try:
-            # Robustness fix: Try to parse from each <|start|> token (200006)
-            # This handles cases where the model outputs text before the message,
-            # or hallucinates invalid <|start|> tokens.
-            start_token = 200006
-            start_indices = [i for i, t in enumerate(tokens) if t == start_token]
-            logger.info(f"[step] Found {len(start_indices)} start tokens at positions: {start_indices}")
-
-            if not start_indices:
-                # No start token found, try parsing as is (will likely fail or return empty)
-                logger.info("[step] No start tokens found, parsing full token sequence")
-                parsed_messages = self.enc.parse_messages_from_completion_tokens(tokens, role=Role.ASSISTANT, strict=False)
-                logger.info(f"[step] Parsed {len(parsed_messages)} messages from full sequence")
-                command = extract_command_from_messages(parsed_messages)
-            else:
-                # Try each start position until we find a valid command
-                for idx, i in enumerate(start_indices):
-                    try:
-                        current_tokens = tokens[i:]
-                        logger.info(f"[step] Trying start position {idx} (token index {i}), parsing {len(current_tokens)} tokens")
-                        parsed_messages = self.enc.parse_messages_from_completion_tokens(current_tokens, role=Role.ASSISTANT, strict=False)
-                        logger.info(f"[step] Start position {idx}: parsed {len(parsed_messages)} messages")
-                        cmd = extract_command_from_messages(parsed_messages)
-                        if cmd:
-                            logger.info(f"[step] Start position {idx}: found command!")
-                            command = cmd
-                            break
-                        else:
-                            logger.info(f"[step] Start position {idx}: no command found")
-                        # We keep the last valid parse result if no command found yet
-                    except Exception as e:
-                        logger.info(f"[step] Start position {idx}: parsing exception: {e}")
-                        continue
-
-                # If we didn't find a command, but we parsed something successfully, we might want to return that?
-                # But extract_command_from_messages returns None if no command.
-                # If all attempts failed to produce a command, command is None.
-
-        except Exception as e:
-            logger.error(f"Failed to parse command with Harmony: {e}")
-            command = None
-
-        logger.info(f"[step] Final command after Harmony parsing: {repr(command[:200] if command and len(command) > 200 else command)}")
-
-        if command is None:
-            # Fallback: Check if the model output a bash code block in the text (even if in final answer)
-            # This handles cases where the model forgets to use the tool but provides the code.
-            import re
-            logger.info("[step] Trying fallback 1: markdown bash block pattern")
-            bash_block_pattern = re.compile(r"```bash\s*\n(.*?)\n```", re.DOTALL)
-            match = bash_block_pattern.search(generated_text)
-            if match:
-                command = match.group(1).strip()
-                logger.warning(f"Fallback 1: Extracted command from markdown block: {repr(command[:200] if len(command) > 200 else command)}")
-            else:
-                logger.info("[step] Fallback 1: no markdown bash block found")
-
-        if command is None:
-            # Fallback 2: Check for malformed Harmony tags (e.g. analysis to=execute_bash code)
-            # The model sometimes outputs <|channel|>analysis to=execute_bash code<|message|>COMMAND
-            # We use a regex to extract this pattern even if Harmony parsing failed
-            logger.info("[step] Trying fallback 2: malformed Harmony tags pattern")
-            malformed_pattern = re.compile(r"<\|channel\|>analysis to=execute_bash code<\|message\|>(.*?)(?:<\|end\|>|$)", re.DOTALL)
-            match = malformed_pattern.search(generated_text)
-            if match:
-                command = match.group(1).strip()
-                logger.warning(f"Fallback 2: Extracted command from malformed tags: {repr(command[:200] if len(command) > 200 else command)}")
-            else:
-                logger.info("[step] Fallback 2: no malformed pattern found")
-
-        # Fallback 3: Check for "commentary to=functions.execute_bash" pattern (seen in logs)
-        if command is None:
-            logger.info("[step] Trying fallback 3: commentary to=functions.execute_bash pattern")
-            # Pattern: <|channel|>commentary to=functions.execute_bash <|constrain|>json<|message|>{"command":"..."}
-            func_pattern = re.compile(
-                r"<\|channel\|>commentary to=functions\.execute_bash[^<]*<\|(?:constrain\|>[^<]*<\|)?message\|>(.*?)(?:<\|call\|>|<\|end\|>|$)",
-                re.DOTALL
-            )
-            match = func_pattern.search(generated_text)
-            if match:
-                content = match.group(1).strip()
-                logger.info(f"[step] Fallback 3: found content: {repr(content[:300] if len(content) > 300 else content)}")
-                # Try to parse as JSON
-                try:
-                    args = json.loads(content)
-                    command = args.get("command")
-                    logger.warning(f"Fallback 3: Extracted command from functions pattern: {repr(command[:200] if command and len(command) > 200 else command)}")
-                except json.JSONDecodeError as e:
-                    logger.info(f"[step] Fallback 3: JSON decode failed: {e}, using raw content")
-                    command = content
-                    logger.warning(f"Fallback 3: Using raw content as command: {repr(command[:200] if len(command) > 200 else command)}")
-            else:
-                logger.info("[step] Fallback 3: no functions.execute_bash pattern found")
+        # Extract command using regex patterns (more reliable than Harmony token parsing)
+        command = self._extract_command_from_text(generated_text)
             
         if command is None:
             # No command found - treat as final answer attempt
             logger.info("No command found in response - checking for final answer")
             return await self._handle_final_answer(generated_text)
 
-        # Validate command safety
-        is_safe, reason = validate_command_safety(command)
-        if not is_safe:
-            logger.warning(f"Unsafe command blocked: {reason}")
-            observation_text = f"Error: Command blocked for safety - {reason}"
-        else:
-            # Execute command in Docker container
-            stdout, stderr, returncode = await self._execute_command_in_container(command)
-            
-            # Format observation
-            observation_text = format_command_observation(command, stdout, stderr, returncode)
-            observation_text = truncate_output(observation_text, max_chars=10000000)
+        # Execute command in Docker container
+        stdout, stderr, returncode = await self._execute_command_in_container(command)
+        
+        # Format observation
+        observation_text = format_command_observation(command, stdout, stderr, returncode)
+        observation_text = truncate_output(observation_text, max_chars=10000000)
 
         logger.info("Command execution result:")
         logger.info("-" * 100)
