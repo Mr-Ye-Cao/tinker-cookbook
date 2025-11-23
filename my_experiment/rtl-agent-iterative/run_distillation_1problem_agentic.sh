@@ -67,7 +67,7 @@ python train_distillation_agentic.py \
   student_model=openai/gpt-oss-20b \
   teacher_model=openai/gpt-oss-120b \
   batch_size=1 \
-  group_size=2 \
+  group_size=1 \
   learning_rate=1e-4 \
   max_tokens=4096 \
   max_turns=50 \
