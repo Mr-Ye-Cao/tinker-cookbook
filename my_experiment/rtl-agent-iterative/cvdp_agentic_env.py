@@ -488,20 +488,31 @@ class CVDPAgenticEnv(Env):
                                         # Check for stuttering: if <|channel|> appears shortly after, remove the stutter
                                         # Look ahead up to 5 tokens
                                         found_channel_ahead = False
+                                        found_message_ahead = False
+                                        TOKEN_MESSAGE = 200008 # Corrected from logs
+                                        
                                         for offset in range(1, 6):
-                                            if i + offset < len(full_tokens) and full_tokens[i + offset] == TOKEN_CHANNEL:
-                                                found_channel_ahead = True
-                                                # Remove tokens from i to i+offset (exclusive of channel)
-                                                logger.info(f"[extract] Found <|channel|> at offset {offset}, removing stutter tokens: {full_tokens[i:i+offset]}")
-                                                del full_tokens[i:i+offset]
-                                                # Now we are at <|channel|>, so just inject <|start|>assistant
-                                                tokens_to_inject.append(TOKEN_ASSISTANT)
-                                                break
+                                            if i + offset < len(full_tokens):
+                                                if full_tokens[i + offset] == TOKEN_CHANNEL:
+                                                    found_channel_ahead = True
+                                                    # Remove tokens from i to i+offset (exclusive of channel)
+                                                    logger.info(f"[extract] Found <|channel|> at offset {offset}, removing stutter tokens: {full_tokens[i:i+offset]}")
+                                                    del full_tokens[i:i+offset]
+                                                    # Now we are at <|channel|>, so just inject <|start|>assistant
+                                                    tokens_to_inject.append(TOKEN_ASSISTANT)
+                                                    break
+                                                elif full_tokens[i + offset] == TOKEN_MESSAGE:
+                                                    found_message_ahead = True
                                         
                                         if not found_channel_ahead:
-                                            # Model output: commentary ... -> Inject: <|start|>assistant<|channel|>
-                                            tokens_to_inject.append(TOKEN_ASSISTANT)
-                                            tokens_to_inject.append(TOKEN_CHANNEL)
+                                            if found_message_ahead:
+                                                # Model output: commentary ... <|message|> -> Inject: <|start|>assistant<|channel|>
+                                                tokens_to_inject.append(TOKEN_ASSISTANT)
+                                                tokens_to_inject.append(TOKEN_CHANNEL)
+                                            else:
+                                                # Model output: commentary ... (no message) -> It's content! Inject: <|start|>assistant<|message|>
+                                                tokens_to_inject.append(TOKEN_ASSISTANT)
+                                                tokens_to_inject.append(TOKEN_MESSAGE)
                                     else:
                                         # Default fallback: Inject <|start|>assistant
                                         # If it's not one of the above, it might be content or another channel
