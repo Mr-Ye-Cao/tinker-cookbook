@@ -528,9 +528,7 @@ class CVDPAgenticEnv(Env):
         )
 
         # Check if episode should end
-        should_end, end_reason = False, ""
-        if is_safe:
-            should_end, end_reason = self._check_episode_done(command, stdout, stderr, returncode)
+        should_end, end_reason = self._check_episode_done(command, stdout, stderr, returncode)
 
         if should_end:
             logger.info(f"Episode ending: {end_reason}")
