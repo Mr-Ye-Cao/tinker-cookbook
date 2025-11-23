@@ -40,6 +40,11 @@ from utils import (
 logger = logging.getLogger(__name__)
 
 
+class RetryParsingException(Exception):
+    """Internal exception to trigger parser restart."""
+    pass
+
+
 class CVDPAgenticEnv(Env):
     """
     Multi-turn agentic environment for RTL design tasks.
@@ -432,33 +437,119 @@ class CVDPAgenticEnv(Env):
         # Parse tokens using StreamableParser (vLLM's approach)
         # We stop parsing once we find a function call - the model may generate
         # malformed tokens after the function call (missing <|start|>assistant)
-        parser = StreamableParser(self.enc, role=Role.ASSISTANT)
-        found_command = None
-
-        for i, token_id in enumerate(full_tokens):
+        # We need to be able to restart parsing if we inject tokens
+        max_retries = 20
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            # Initialize a fresh parser for each attempt
+            parser = StreamableParser(self.enc, role=Role.ASSISTANT)
+            
             try:
-                parser.process(token_id)
-            except Exception as e:
-                # Parser failed - check if we already have a function call in parsed messages
-                logger.info(f"[extract] Parser failed at token {i}, checking {len(parser.messages)} parsed messages")
-                for message in parser.messages:
-                    if message.channel == "commentary" and message.recipient:
-                        if message.recipient.startswith("functions.execute_bash"):
-                            content_text = message.content[0].text if message.content else ""
-                            logger.info(f"[extract] Found function call before parser error: {message.recipient}")
-                            try:
-                                args = json.loads(content_text)
-                                found_command = args.get("command")
-                                if found_command:
-                                    logger.info(f"[extract] Extracted command: {repr(found_command[:100] if len(found_command) > 100 else found_command)}")
-                                    return found_command
-                            except json.JSONDecodeError:
-                                if content_text and not content_text.startswith('{'):
-                                    return content_text
+                i = 0
+                while i < len(full_tokens):
+                    token_id = full_tokens[i]
+                    try:
+                        parser.process(token_id)
+                        i += 1
+                    except Exception as e:
+                                # Handle missing start token error by injecting it
+                        error_msg = str(e)
+                        if "expecting start token" in error_msg:
+                            # Extract expected and unexpected tokens
+                            # Format: "Unexpected token <ID> while expecting start token <ID>"
+                            match = re.search(r"Unexpected token (\d+) while expecting start token (\d+)", error_msg)
+                            if match:
+                                unexpected_token = int(match.group(1))
+                                expected_token = int(match.group(2))
+                                
+                                logger.info(f"[extract] Parser error at token {i} ({token_id}): {error_msg}")
+                                
+                                # Determine what to inject based on the unexpected token
+                                tokens_to_inject = [expected_token] # Always start with <|start|> (200006)
+                                
+                                # Check what the unexpected token is to decide if we need more tokens
+                                # Constants for Harmony tokens
+                                TOKEN_ASSISTANT = 173781
+                                TOKEN_CHANNEL = 200005
+                                TOKEN_MESSAGE = 200004 # Assuming 200004 based on pattern, but will check string
+                                
+                                try:
+                                    unexpected_str = self.enc.decode([unexpected_token])
+                                    logger.info(f"[extract] Unexpected token {unexpected_token} decodes to: {repr(unexpected_str)}")
+                                    
+                                    if unexpected_token == TOKEN_ASSISTANT:
+                                        # Model output: assistant ... -> Inject: <|start|>
+                                        pass
+                                    elif unexpected_str == "<|channel|>" or unexpected_str == "<|message|>":
+                                        # Model output: <|channel|> ... -> Inject: <|start|>assistant
+                                        tokens_to_inject.append(TOKEN_ASSISTANT)
+                                    elif any(s in unexpected_str for s in ["comment", "analysis", "thought", "final"]):
+                                        # Check for stuttering: if <|channel|> appears shortly after, remove the stutter
+                                        # Look ahead up to 5 tokens
+                                        found_channel_ahead = False
+                                        for offset in range(1, 6):
+                                            if i + offset < len(full_tokens) and full_tokens[i + offset] == TOKEN_CHANNEL:
+                                                found_channel_ahead = True
+                                                # Remove tokens from i to i+offset (exclusive of channel)
+                                                logger.info(f"[extract] Found <|channel|> at offset {offset}, removing stutter tokens: {full_tokens[i:i+offset]}")
+                                                del full_tokens[i:i+offset]
+                                                # Now we are at <|channel|>, so just inject <|start|>assistant
+                                                tokens_to_inject.append(TOKEN_ASSISTANT)
+                                                break
+                                        
+                                        if not found_channel_ahead:
+                                            # Model output: commentary ... -> Inject: <|start|>assistant<|channel|>
+                                            tokens_to_inject.append(TOKEN_ASSISTANT)
+                                            tokens_to_inject.append(TOKEN_CHANNEL)
+                                    else:
+                                        # Default fallback: Inject <|start|>assistant
+                                        # If it's not one of the above, it might be content or another channel
+                                        # If we inject just assistant, we might get "assistant<content>" which is invalid
+                                        # Let's try to be smarter: if it looks like a word, it's probably a channel
+                                        if unexpected_str.strip().isalpha():
+                                             tokens_to_inject.append(TOKEN_ASSISTANT)
+                                             tokens_to_inject.append(TOKEN_CHANNEL)
+                                        else:
+                                             tokens_to_inject.append(TOKEN_ASSISTANT)
+                                        
+                                except Exception as decode_err:
+                                    logger.warning(f"[extract] Failed to decode unexpected token: {decode_err}")
+                                    # Fallback
+                                    tokens_to_inject.append(TOKEN_ASSISTANT)
 
-                # No function call found before error - re-raise
-                logger.error(f"[extract] No function call found in {len(parser.messages)} messages before parser error")
-                raise
+                                logger.info(f"[extract] Injecting tokens: {tokens_to_inject} and RESTARTING parse")
+                                
+                                # Insert the expected tokens at the current position
+                                for t in reversed(tokens_to_inject):
+                                    full_tokens.insert(i, t)
+                                
+                                # DEBUG: Print tokens after insertion
+                                debug_end = min(i + 20, len(full_tokens))
+                                debug_tokens = full_tokens[i:debug_end]
+                                logger.info(f"[extract] DEBUG: Tokens after insertion at {i}: {debug_tokens}")
+                                try:
+                                    decoded_debug = self.enc.decode(debug_tokens)
+                                    logger.info(f"[extract] DEBUG: Decoded text after insertion: {repr(decoded_debug)}")
+                                except Exception as decode_err:
+                                    logger.error(f"[extract] DEBUG: Failed to decode tokens: {decode_err}")
+
+                                # Break inner loop to restart parsing with modified tokens
+                                raise RetryParsingException()
+                        
+                        # If not handled, re-raise
+                        logger.error(f"[extract] Parser failed at token {i} ({token_id}): {e}")
+                        raise e
+                
+                # If we get here, parsing completed successfully
+                break
+                
+            except RetryParsingException:
+                retry_count += 1
+                continue
+                
+        if retry_count >= max_retries:
+            logger.error(f"[extract] Failed to parse tokens after {max_retries} retries")
 
         # Check completed messages for function calls
         for message in parser.messages:
@@ -506,6 +597,16 @@ class CVDPAgenticEnv(Env):
             StepResult with observation, reward, done, info
         """
         self.current_turn += 1
+
+        # DEBUG: Log what action looks like
+        logger.info(f"[step] DEBUG: action type = {type(action)}")
+        logger.info(f"[step] DEBUG: action length = {len(action) if hasattr(action, '__len__') else 'N/A'}")
+        if isinstance(action, list):
+            logger.info(f"[step] DEBUG: action (first 10 elements) = {action[:10]}")
+            if len(action) > 10:
+                logger.info(f"[step] DEBUG: action (elements 10-20) = {action[10:20]}")
+        else:
+            logger.info(f"[step] DEBUG: action (raw) = {repr(action)[:200]}")
 
         # Ensure action is a list of token IDs
         if isinstance(action, list):
