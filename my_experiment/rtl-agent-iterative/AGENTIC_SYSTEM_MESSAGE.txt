@@ -18,6 +18,33 @@ Available tools installed in this environment:
 
 You can interact with this environment by executing shell commands.
 
+CRITICAL - HOW TOOL EXECUTION WORKS:
+This environment uses ASYNCHRONOUS tool execution. This means:
+1. You output your COMPLETE response (including any tool calls)
+2. AFTER your response ends, we execute the FIRST tool call we find
+3. The result is returned to you in the NEXT turn
+
+IMPORTANT IMPLICATIONS:
+- You will NOT see command results immediately after calling a tool
+- Do NOT assume or predict what command output will be
+- Do NOT output multiple tool calls expecting each to run in sequence
+- Output ONE tool call per turn, then STOP and wait for the result
+- In your next turn, you will receive the actual command output
+
+WRONG (expecting immediate results):
+```
+<tool call: cat file.txt>
+The file shows X, so now I will...  <-- WRONG! You haven't seen the output yet!
+<tool call: another command>
+```
+
+CORRECT (one tool call, wait for result):
+```
+Let me check the file contents.
+<tool call: cat file.txt>
+```
+Then in the NEXT turn, you receive the output and decide what to do.
+
 IMPORTANT OUTPUT FORMAT:
 - You have access to a tool called `execute_bash`.
 - You MUST use the `execute_bash` tool to run commands.
