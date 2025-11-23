@@ -21,7 +21,8 @@ try:
         SystemContent,
         Message,
         Conversation,
-        Author
+        Author,
+        StreamableParser,
     )
 except ImportError:
     pass
@@ -390,86 +391,108 @@ class CVDPAgenticEnv(Env):
         tokens = self.enc.render_conversation_for_completion(convo, Role.ASSISTANT)
         return tinker.ModelInput.from_ints(tokens), self.stop_condition
 
-    def _extract_command_from_text(self, text: str) -> Optional[str]:
+    def _get_assistant_start_tokens(self) -> List[int]:
         """
-        Extract bash command from model's generated text using regex patterns.
+        Get the tokens that start an assistant turn in Harmony format.
 
-        This is more reliable than Harmony token parsing for raw model output.
+        These tokens are needed because render_conversation_for_completion()
+        primes the model with the assistant start, but the model's output
+        tokens don't include this prefix.
+        """
+        # Render an empty conversation for assistant completion to get start tokens
+        empty_convo = Conversation.from_messages([])
+        start_tokens = self.enc.render_conversation_for_completion(empty_convo, Role.ASSISTANT)
+        return list(start_tokens)
+
+    def _extract_command_from_tokens(self, token_ids: List[int]) -> Optional[str]:
+        """
+        Extract bash command from model's generated tokens using StreamableParser.
+
+        Uses the official Harmony token parsing (same as vLLM) for robust extraction.
 
         Args:
-            text: Raw model output text
+            token_ids: Token IDs from model output
 
         Returns:
             Extracted command string, or None if no command found
         """
-        command = None
+        # Prepend assistant start tokens (the model's output doesn't include these
+        # because they were used as priming in render_conversation_for_completion)
+        assistant_start = self._get_assistant_start_tokens()
+        full_tokens = assistant_start + list(token_ids)
 
-        # Pattern 1: commentary to=functions.execute_bash with JSON (most common)
-        # Format: <|channel|>commentary to=functions.execute_bash <|constrain|>json<|message|>{"command":"..."}
-        func_pattern = re.compile(
-            r"<\|channel\|>commentary to=functions\.execute_bash[^<]*<\|(?:constrain\|>[^<]*<\|)?message\|>(.*?)(?:<\|call\|>|<\|end\|>|$)",
-            re.DOTALL
-        )
-        match = func_pattern.search(text)
-        if match:
-            content = match.group(1).strip()
-            logger.info(f"[extract] Found functions.execute_bash pattern, content: {repr(content[:200] if len(content) > 200 else content)}")
+        # DEBUG: Log token details
+        logger.info(f"[extract] DEBUG: assistant_start tokens = {assistant_start}")
+        logger.info(f"[extract] DEBUG: action token_ids (first 10) = {list(token_ids)[:10]}")
+        logger.info(f"[extract] DEBUG: full_tokens (first 15) = {full_tokens[:15]}")
+        logger.info(f"[extract] DEBUG: full_tokens[0] = {full_tokens[0]} (expecting 200006)")
+        logger.info(f"[extract] DEBUG: decoded start = {repr(self.enc.decode(assistant_start))}")
+        logger.info(f"[extract] DEBUG: decoded first 10 action = {repr(self.enc.decode(list(token_ids)[:10]))}")
+
+        # Parse tokens using StreamableParser (vLLM's approach)
+        # We stop parsing once we find a function call - the model may generate
+        # malformed tokens after the function call (missing <|start|>assistant)
+        parser = StreamableParser(self.enc, role=Role.ASSISTANT)
+        found_command = None
+
+        for i, token_id in enumerate(full_tokens):
             try:
-                args = json.loads(content)
-                command = args.get("command")
-                if command:
-                    logger.info(f"[extract] Extracted command from JSON: {repr(command[:100] if len(command) > 100 else command)}")
-                    return command
-            except json.JSONDecodeError as e:
-                logger.info(f"[extract] JSON decode failed: {e}, trying raw content")
-                # If not valid JSON, use raw content as command
-                if content and not content.startswith('{'):
-                    command = content
-                    logger.info(f"[extract] Using raw content as command: {repr(command[:100] if len(command) > 100 else command)}")
-                    return command
+                parser.process(token_id)
+            except Exception as e:
+                # Parser failed - check if we already have a function call in parsed messages
+                logger.info(f"[extract] Parser failed at token {i}, checking {len(parser.messages)} parsed messages")
+                for message in parser.messages:
+                    if message.channel == "commentary" and message.recipient:
+                        if message.recipient.startswith("functions.execute_bash"):
+                            content_text = message.content[0].text if message.content else ""
+                            logger.info(f"[extract] Found function call before parser error: {message.recipient}")
+                            try:
+                                args = json.loads(content_text)
+                                found_command = args.get("command")
+                                if found_command:
+                                    logger.info(f"[extract] Extracted command: {repr(found_command[:100] if len(found_command) > 100 else found_command)}")
+                                    return found_command
+                            except json.JSONDecodeError:
+                                if content_text and not content_text.startswith('{'):
+                                    return content_text
 
-        # Pattern 2: analysis to=functions.execute_bash (alternate format)
-        analysis_pattern = re.compile(
-            r"<\|channel\|>analysis to=functions\.execute_bash[^<]*<\|(?:constrain\|>[^<]*<\|)?message\|>(.*?)(?:<\|call\|>|<\|end\|>|$)",
-            re.DOTALL
-        )
-        match = analysis_pattern.search(text)
-        if match:
-            content = match.group(1).strip()
-            logger.info(f"[extract] Found analysis to=functions.execute_bash pattern")
-            try:
-                args = json.loads(content)
-                command = args.get("command")
-                if command:
-                    return command
-            except json.JSONDecodeError:
-                if content and not content.startswith('{'):
-                    return content
+                # No function call found before error - re-raise
+                logger.error(f"[extract] No function call found in {len(parser.messages)} messages before parser error")
+                raise
 
-        # Pattern 3: Malformed tags (analysis to=execute_bash code)
-        malformed_pattern = re.compile(
-            r"<\|channel\|>analysis to=execute_bash code<\|message\|>(.*?)(?:<\|end\|>|$)",
-            re.DOTALL
-        )
-        match = malformed_pattern.search(text)
-        if match:
-            content = match.group(1).strip()
-            logger.info(f"[extract] Found malformed pattern")
-            try:
-                args = json.loads(content)
-                return args.get("command")
-            except json.JSONDecodeError:
-                return content
+        # Check completed messages for function calls
+        for message in parser.messages:
+            if message.channel == "commentary" and message.recipient:
+                if message.recipient.startswith("functions.execute_bash"):
+                    content_text = message.content[0].text if message.content else ""
+                    logger.info(f"[extract] Found function call via StreamableParser: {message.recipient}")
+                    logger.info(f"[extract] Arguments: {repr(content_text[:200] if len(content_text) > 200 else content_text)}")
+                    try:
+                        args = json.loads(content_text)
+                        command = args.get("command")
+                        if command:
+                            logger.info(f"[extract] Extracted command: {repr(command[:100] if len(command) > 100 else command)}")
+                            return command
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"[extract] JSON decode failed: {e}, using raw content")
+                        # If not valid JSON, use raw content as command
+                        if content_text and not content_text.startswith('{'):
+                            return content_text
 
-        # Pattern 4: Markdown bash code block
-        bash_block_pattern = re.compile(r"```bash\s*\n(.*?)\n```", re.DOTALL)
-        match = bash_block_pattern.search(text)
-        if match:
-            command = match.group(1).strip()
-            logger.info(f"[extract] Found markdown bash block: {repr(command[:100] if len(command) > 100 else command)}")
-            return command
+        # Check in-progress content (if model stopped mid-generation)
+        if parser.current_channel == "commentary" and parser.current_recipient:
+            if "execute_bash" in parser.current_recipient:
+                logger.info(f"[extract] Found in-progress function call: {parser.current_recipient}")
+                try:
+                    args = json.loads(parser.current_content)
+                    command = args.get("command")
+                    if command:
+                        return command
+                except json.JSONDecodeError:
+                    if parser.current_content and not parser.current_content.startswith('{'):
+                        return parser.current_content
 
-        logger.info("[extract] No command pattern found in text")
+        logger.info("[extract] No function call found in tokens")
         return None
 
     async def step(self, action: Action) -> StepResult:
@@ -477,29 +500,33 @@ class CVDPAgenticEnv(Env):
         Execute one turn of the agentic loop.
 
         Args:
-            action: Model generated text (command or final answer)
+            action: Model generated tokens (list of token IDs)
 
         Returns:
             StepResult with observation, reward, done, info
         """
         self.current_turn += 1
-        
-        # Decode action to text
+
+        # Ensure action is a list of token IDs
         if isinstance(action, list):
-            generated_text = self.enc.decode(action)
+            token_ids = action
         else:
-            generated_text = action
+            # Fallback: if action is somehow a string, encode it
+            token_ids = self.enc.encode(action)
+
+        # Decode for logging
+        generated_text = self.enc.decode(token_ids)
 
         logger.info("=" * 100)
         logger.info(f"TURN {self.current_turn}/{self.max_turns}")
         logger.info("=" * 100)
-        logger.info(f"Model response ({len(generated_text)} chars):")
+        logger.info(f"Model response ({len(generated_text)} chars, {len(token_ids)} tokens):")
         logger.info("-" * 100)
-        logger.info(generated_text)  # Full output
+        logger.info(generated_text)  # Full output for logging
         logger.info("=" * 100)
 
-        # Extract command using regex patterns (more reliable than Harmony token parsing)
-        command = self._extract_command_from_text(generated_text)
+        # Extract command using StreamableParser (vLLM's approach)
+        command = self._extract_command_from_tokens(token_ids)
             
         if command is None:
             # No command found - treat as final answer attempt
@@ -586,9 +613,6 @@ class CVDPAgenticEnv(Env):
                     logger.info("Files copied successfully.")
             except Exception as e:
                 logger.error(f"Error copying files: {e}")
-
-        # Run CVDP evaluation
-        eval_result = await self._run_cvdp_evaluation()
 
         # Run CVDP evaluation
         eval_result = await self._run_cvdp_evaluation()
