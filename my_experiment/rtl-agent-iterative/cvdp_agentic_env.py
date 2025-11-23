@@ -409,17 +409,10 @@ class CVDPAgenticEnv(Env):
         start_tokens = self.enc.render_conversation_for_completion(empty_convo, Role.ASSISTANT)
         return list(start_tokens)
 
-    def _extract_command_from_tokens(self, token_ids: List[int]) -> Optional[str]:
+    def _extract_command_from_tokens(self, token_ids: list[int]) -> list[dict[str, str | None]]:
         """
-        Extract bash command from model's generated tokens using StreamableParser.
-
-        Uses the official Harmony token parsing (same as vLLM) for robust extraction.
-
-        Args:
-            token_ids: Token IDs from model output
-
-        Returns:
-            Extracted command string, or None if no command found
+        Extract bash commands from the model's output tokens.
+        Returns a list of dicts: {'command': str|None, 'error': str|None}
         """
         # Prepend assistant start tokens (the model's output doesn't include these
         # because they were used as priming in render_conversation_for_completion)
@@ -453,7 +446,7 @@ class CVDPAgenticEnv(Env):
                         parser.process(token_id)
                         i += 1
                     except Exception as e:
-                                # Handle missing start token error by injecting it
+                        # Handle missing start token error by injecting it
                         error_msg = str(e)
                         if "expecting start token" in error_msg:
                             # Extract expected and unexpected tokens
@@ -472,7 +465,7 @@ class CVDPAgenticEnv(Env):
                                 # Constants for Harmony tokens
                                 TOKEN_ASSISTANT = 173781
                                 TOKEN_CHANNEL = 200005
-                                TOKEN_MESSAGE = 200004 # Assuming 200004 based on pattern, but will check string
+                                TOKEN_MESSAGE = 200008 # Corrected from logs
                                 
                                 try:
                                     unexpected_str = self.enc.decode([unexpected_token])
@@ -484,12 +477,11 @@ class CVDPAgenticEnv(Env):
                                     elif unexpected_str == "<|channel|>" or unexpected_str == "<|message|>":
                                         # Model output: <|channel|> ... -> Inject: <|start|>assistant
                                         tokens_to_inject.append(TOKEN_ASSISTANT)
-                                    elif any(s in unexpected_str for s in ["comment", "analysis", "thought", "final"]):
-                                        # Check for stuttering: if <|channel|> appears shortly after, remove the stutter
+                                    elif any(s in unexpected_str for s in ["comment", "analysis", "thought", "final"]) or True:
+                                        # Generalize: Check for stuttering or content vs channel
                                         # Look ahead up to 5 tokens
                                         found_channel_ahead = False
                                         found_message_ahead = False
-                                        TOKEN_MESSAGE = 200008 # Corrected from logs
                                         
                                         for offset in range(1, 6):
                                             if i + offset < len(full_tokens):
@@ -506,23 +498,13 @@ class CVDPAgenticEnv(Env):
                                         
                                         if not found_channel_ahead:
                                             if found_message_ahead:
-                                                # Model output: commentary ... <|message|> -> Inject: <|start|>assistant<|channel|>
+                                                # Model output: channel_name ... <|message|> -> Inject: <|start|>assistant<|channel|>
                                                 tokens_to_inject.append(TOKEN_ASSISTANT)
                                                 tokens_to_inject.append(TOKEN_CHANNEL)
                                             else:
-                                                # Model output: commentary ... (no message) -> It's content! Inject: <|start|>assistant<|message|>
+                                                # Model output: content ... (no message) -> It's content! Inject: <|start|>assistant<|message|>
                                                 tokens_to_inject.append(TOKEN_ASSISTANT)
                                                 tokens_to_inject.append(TOKEN_MESSAGE)
-                                    else:
-                                        # Default fallback: Inject <|start|>assistant
-                                        # If it's not one of the above, it might be content or another channel
-                                        # If we inject just assistant, we might get "assistant<content>" which is invalid
-                                        # Let's try to be smarter: if it looks like a word, it's probably a channel
-                                        if unexpected_str.strip().isalpha():
-                                             tokens_to_inject.append(TOKEN_ASSISTANT)
-                                             tokens_to_inject.append(TOKEN_CHANNEL)
-                                        else:
-                                             tokens_to_inject.append(TOKEN_ASSISTANT)
                                         
                                 except Exception as decode_err:
                                     logger.warning(f"[extract] Failed to decode unexpected token: {decode_err}")
@@ -563,39 +545,40 @@ class CVDPAgenticEnv(Env):
             logger.error(f"[extract] Failed to parse tokens after {max_retries} retries")
 
         # Check completed messages for function calls
+        commands = []
         for message in parser.messages:
-            if message.channel == "commentary" and message.recipient:
+            if (message.channel == "commentary" or message.channel == "analysis") and message.recipient:
                 if message.recipient.startswith("functions.execute_bash"):
                     content_text = message.content[0].text if message.content else ""
                     logger.info(f"[extract] Found function call via StreamableParser: {message.recipient}")
                     logger.info(f"[extract] Arguments: {repr(content_text[:200] if len(content_text) > 200 else content_text)}")
+                    
                     try:
                         args = json.loads(content_text)
                         command = args.get("command")
                         if command:
-                            logger.info(f"[extract] Extracted command: {repr(command[:100] if len(command) > 100 else command)}")
-                            return command
+                            commands.append({"command": command, "error": None})
                     except json.JSONDecodeError as e:
-                        logger.warning(f"[extract] JSON decode failed: {e}, using raw content")
-                        # If not valid JSON, use raw content as command
+                        # Fallback for simple string content
                         if content_text and not content_text.startswith('{'):
-                            return content_text
+                            commands.append({"command": content_text, "error": None})
+                        else:
+                            # JSON error - return error message
+                            error_msg = f"JSON decode failed: {e}. Content: {content_text[:200]}..."
+                            logger.warning(f"[extract] {error_msg}")
+                            commands.append({"command": None, "error": error_msg})
+        
+        if commands:
+            return commands
 
-        # Check in-progress content (if model stopped mid-generation)
-        if parser.current_channel == "commentary" and parser.current_recipient:
-            if "execute_bash" in parser.current_recipient:
-                logger.info(f"[extract] Found in-progress function call: {parser.current_recipient}")
-                try:
-                    args = json.loads(parser.current_content)
-                    command = args.get("command")
-                    if command:
-                        return command
-                except json.JSONDecodeError:
-                    if parser.current_content and not parser.current_content.startswith('{'):
-                        return parser.current_content
+        # Fallback: check for final answer in 'final' channel
+        for message in parser.messages:
+            if message.channel == "final":
+                logger.info("[extract] Found final answer")
+                # We treat final answer as empty command list (done)
+                return []
 
-        logger.info("[extract] No function call found in tokens")
-        return None
+        return []
 
     async def step(self, action: Action) -> StepResult:
         """
@@ -608,16 +591,6 @@ class CVDPAgenticEnv(Env):
             StepResult with observation, reward, done, info
         """
         self.current_turn += 1
-
-        # DEBUG: Log what action looks like
-        logger.info(f"[step] DEBUG: action type = {type(action)}")
-        logger.info(f"[step] DEBUG: action length = {len(action) if hasattr(action, '__len__') else 'N/A'}")
-        if isinstance(action, list):
-            logger.info(f"[step] DEBUG: action (first 10 elements) = {action[:10]}")
-            if len(action) > 10:
-                logger.info(f"[step] DEBUG: action (elements 10-20) = {action[10:20]}")
-        else:
-            logger.info(f"[step] DEBUG: action (raw) = {repr(action)[:200]}")
 
         # Ensure action is a list of token IDs
         if isinstance(action, list):
@@ -637,41 +610,59 @@ class CVDPAgenticEnv(Env):
         logger.info(generated_text)  # Full output for logging
         logger.info("=" * 100)
 
-        # Extract command using StreamableParser (vLLM's approach)
-        command = self._extract_command_from_tokens(token_ids)
+        # Extract commands using StreamableParser (vLLM's approach)
+        extracted_items = self._extract_command_from_tokens(token_ids)
             
-        if command is None:
+        if not extracted_items:
             # No command found - treat as final answer attempt
             logger.info("No command found in response - checking for final answer")
             return await self._handle_final_answer(generated_text)
 
-        # Execute command in Docker container
-        stdout, stderr, returncode = await self._execute_command_in_container(command)
-        
-        # Format observation
-        observation_text = format_command_observation(command, stdout, stderr, returncode)
-        observation_text = truncate_output(observation_text, max_chars=10000000)
+        # Execute all commands
+        for i, item in enumerate(extracted_items):
+            command = item.get("command")
+            error = item.get("error")
+            
+            if error:
+                logger.info(f"Processing parsing error {i+1}/{len(extracted_items)}: {error}")
+                observation_text = f"Error parsing command: {error}"
+                # We don't execute anything, just report error
+                stdout, stderr, returncode = "", error, 1
+                # Use a placeholder command for logging/history
+                command_for_log = "PARSING_ERROR"
+            else:
+                logger.info(f"Executing command {i+1}/{len(extracted_items)}: {command}")
+                
+                # Execute command in Docker container
+                stdout, stderr, returncode = await self._execute_command_in_container(command)
+                
+                # Format observation
+                observation_text = format_command_observation(command, stdout, stderr, returncode)
+                command_for_log = command
+            
+            observation_text = truncate_output(observation_text, max_chars=10000000)
 
-        logger.info("Command execution result:")
-        logger.info("-" * 100)
-        logger.info(observation_text)
-        logger.info("=" * 100)
+            logger.info("Command execution result:")
+            logger.info("-" * 100)
+            logger.info(observation_text)
+            logger.info("=" * 100)
 
-        # Add observation to history as Tool output
-        # Tool messages require Author with role and tool name, plus channel "commentary"
-        self.conversation_history.append(
-            Message.from_author_and_content(
-                Author.new(Role.TOOL, "functions.execute_bash"),
-                observation_text,
-            ).with_channel("commentary")
-        )
+            # Add observation to history as Tool output
+            # Tool messages require Author with role and tool name, plus channel "commentary"
+            self.conversation_history.append(
+                Message.from_author_and_content(
+                    Author.new(Role.TOOL, "functions.execute_bash"),
+                    observation_text,
+                ).with_channel("commentary")
+            )
 
-        # Check if episode should end
-        should_end, end_reason = self._check_episode_done(command, stdout, stderr, returncode)
+            # Check if episode should end (only for valid commands)
+            if not error:
+                should_end, end_reason = self._check_episode_done(command, stdout, stderr, returncode)
 
-        if should_end:
-            logger.info(f"Episode ending: {end_reason}")
-            return await self._handle_episode_end(end_reason)
+                if should_end:
+                    logger.info(f"Episode ending: {end_reason}")
+                    return await self._handle_episode_end(end_reason)
 
         # Check for max turns
         if self.current_turn >= self.max_turns:
