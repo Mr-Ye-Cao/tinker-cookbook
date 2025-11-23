@@ -20,7 +20,8 @@ try:
         DeveloperContent,
         SystemContent,
         Message,
-        Conversation
+        Conversation,
+        Author
     )
 except ImportError:
     pass
@@ -421,6 +422,14 @@ class CVDPAgenticEnv(Env):
         
         # Parse messages from generated text to handle tool calls correctly
         tokens = self.enc.encode(generated_text, allowed_special="all")
+        logger.info(f"[step] Encoded generated_text to {len(tokens)} tokens")
+
+        # Debug: Show first and last few tokens
+        if len(tokens) > 0:
+            first_tokens = tokens[:20]
+            last_tokens = tokens[-20:] if len(tokens) > 20 else []
+            logger.info(f"[step] First 20 tokens: {first_tokens}")
+            logger.info(f"[step] Last 20 tokens: {last_tokens}")
 
         command = None
         try:
@@ -429,25 +438,34 @@ class CVDPAgenticEnv(Env):
             # or hallucinates invalid <|start|> tokens.
             start_token = 200006
             start_indices = [i for i, t in enumerate(tokens) if t == start_token]
-            
+            logger.info(f"[step] Found {len(start_indices)} start tokens at positions: {start_indices}")
+
             if not start_indices:
                 # No start token found, try parsing as is (will likely fail or return empty)
+                logger.info("[step] No start tokens found, parsing full token sequence")
                 parsed_messages = self.enc.parse_messages_from_completion_tokens(tokens, role=Role.ASSISTANT, strict=False)
+                logger.info(f"[step] Parsed {len(parsed_messages)} messages from full sequence")
                 command = extract_command_from_messages(parsed_messages)
             else:
                 # Try each start position until we find a valid command
-                for i in start_indices:
+                for idx, i in enumerate(start_indices):
                     try:
                         current_tokens = tokens[i:]
+                        logger.info(f"[step] Trying start position {idx} (token index {i}), parsing {len(current_tokens)} tokens")
                         parsed_messages = self.enc.parse_messages_from_completion_tokens(current_tokens, role=Role.ASSISTANT, strict=False)
+                        logger.info(f"[step] Start position {idx}: parsed {len(parsed_messages)} messages")
                         cmd = extract_command_from_messages(parsed_messages)
                         if cmd:
+                            logger.info(f"[step] Start position {idx}: found command!")
                             command = cmd
                             break
+                        else:
+                            logger.info(f"[step] Start position {idx}: no command found")
                         # We keep the last valid parse result if no command found yet
-                    except Exception:
+                    except Exception as e:
+                        logger.info(f"[step] Start position {idx}: parsing exception: {e}")
                         continue
-                
+
                 # If we didn't find a command, but we parsed something successfully, we might want to return that?
                 # But extract_command_from_messages returns None if no command.
                 # If all attempts failed to produce a command, command is None.
@@ -456,25 +474,57 @@ class CVDPAgenticEnv(Env):
             logger.error(f"Failed to parse command with Harmony: {e}")
             command = None
 
+        logger.info(f"[step] Final command after Harmony parsing: {repr(command[:200] if command and len(command) > 200 else command)}")
+
         if command is None:
             # Fallback: Check if the model output a bash code block in the text (even if in final answer)
             # This handles cases where the model forgets to use the tool but provides the code.
             import re
+            logger.info("[step] Trying fallback 1: markdown bash block pattern")
             bash_block_pattern = re.compile(r"```bash\s*\n(.*?)\n```", re.DOTALL)
             match = bash_block_pattern.search(generated_text)
             if match:
                 command = match.group(1).strip()
-                logger.warning("Fallback: Extracted command from markdown block despite missing tool call.")
-            
+                logger.warning(f"Fallback 1: Extracted command from markdown block: {repr(command[:200] if len(command) > 200 else command)}")
+            else:
+                logger.info("[step] Fallback 1: no markdown bash block found")
+
         if command is None:
             # Fallback 2: Check for malformed Harmony tags (e.g. analysis to=execute_bash code)
             # The model sometimes outputs <|channel|>analysis to=execute_bash code<|message|>COMMAND
             # We use a regex to extract this pattern even if Harmony parsing failed
+            logger.info("[step] Trying fallback 2: malformed Harmony tags pattern")
             malformed_pattern = re.compile(r"<\|channel\|>analysis to=execute_bash code<\|message\|>(.*?)(?:<\|end\|>|$)", re.DOTALL)
             match = malformed_pattern.search(generated_text)
             if match:
                 command = match.group(1).strip()
-                logger.warning("Fallback: Extracted command from malformed Harmony tags.")
+                logger.warning(f"Fallback 2: Extracted command from malformed tags: {repr(command[:200] if len(command) > 200 else command)}")
+            else:
+                logger.info("[step] Fallback 2: no malformed pattern found")
+
+        # Fallback 3: Check for "commentary to=functions.execute_bash" pattern (seen in logs)
+        if command is None:
+            logger.info("[step] Trying fallback 3: commentary to=functions.execute_bash pattern")
+            # Pattern: <|channel|>commentary to=functions.execute_bash <|constrain|>json<|message|>{"command":"..."}
+            func_pattern = re.compile(
+                r"<\|channel\|>commentary to=functions\.execute_bash[^<]*<\|(?:constrain\|>[^<]*<\|)?message\|>(.*?)(?:<\|call\|>|<\|end\|>|$)",
+                re.DOTALL
+            )
+            match = func_pattern.search(generated_text)
+            if match:
+                content = match.group(1).strip()
+                logger.info(f"[step] Fallback 3: found content: {repr(content[:300] if len(content) > 300 else content)}")
+                # Try to parse as JSON
+                try:
+                    args = json.loads(content)
+                    command = args.get("command")
+                    logger.warning(f"Fallback 3: Extracted command from functions pattern: {repr(command[:200] if command and len(command) > 200 else command)}")
+                except json.JSONDecodeError as e:
+                    logger.info(f"[step] Fallback 3: JSON decode failed: {e}, using raw content")
+                    command = content
+                    logger.warning(f"Fallback 3: Using raw content as command: {repr(command[:200] if len(command) > 200 else command)}")
+            else:
+                logger.info("[step] Fallback 3: no functions.execute_bash pattern found")
             
         if command is None:
             # No command found - treat as final answer attempt
@@ -500,12 +550,12 @@ class CVDPAgenticEnv(Env):
         logger.info("=" * 100)
 
         # Add observation to history as Tool output
+        # Tool messages require Author with role and tool name, plus channel "commentary"
         self.conversation_history.append(
-            Message.from_role_and_content(
-                Role.TOOL,
+            Message.from_author_and_content(
+                Author.new(Role.TOOL, "functions.execute_bash"),
                 observation_text,
-                recipient="execute_bash" 
-            )
+            ).with_channel("commentary")
         )
 
         # Check if episode should end
@@ -526,10 +576,11 @@ class CVDPAgenticEnv(Env):
         convo = Conversation.from_messages(self.conversation_history)
         tokens = self.enc.render_conversation_for_completion(convo, Role.ASSISTANT)
         return StepResult(
-            observation=tinker.ModelInput.from_ints(tokens),
             reward=0.0,
-            done=False,
-            info={"status": "continuing"}
+            episode_done=False,
+            next_observation=tinker.ModelInput.from_ints(tokens),
+            next_stop_condition=self.stop_condition,
+            metrics={"status": 0}  # 0 = continuing
         )
             
 

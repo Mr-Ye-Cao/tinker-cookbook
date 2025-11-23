@@ -29,27 +29,58 @@ def extract_command_from_messages(messages: List[Message]) -> Optional[str]:
     Returns:
         The bash command string if a tool call was detected, None otherwise
     """
-    for msg in messages:
+    logger.info(f"[extract_command] Processing {len(messages)} parsed messages")
+
+    for i, msg in enumerate(messages):
+        # Debug: Log message attributes
+        msg_role = getattr(msg, 'role', None)
+        msg_recipient = getattr(msg, 'recipient', None)
+        msg_channel = getattr(msg, 'channel', None)
+        msg_content = getattr(msg, 'content', None)
+
+        logger.info(f"[extract_command] Message {i}: role={msg_role}, recipient={msg_recipient}, channel={msg_channel}")
+
+        # Log content details
+        if msg_content:
+            logger.info(f"[extract_command] Message {i}: content has {len(msg_content)} parts")
+            for j, part in enumerate(msg_content):
+                part_type = type(part).__name__
+                part_text = getattr(part, 'text', None)
+                if part_text:
+                    preview = part_text[:200] if len(part_text) > 200 else part_text
+                    logger.info(f"[extract_command] Message {i} part {j}: type={part_type}, text_preview={repr(preview)}")
+                else:
+                    logger.info(f"[extract_command] Message {i} part {j}: type={part_type}, no text attr")
+
         # Check for recipient or channel indicating tool call
         is_tool_call = False
-        if msg.recipient and "execute_bash" in msg.recipient:
+        if msg_recipient and "execute_bash" in msg_recipient:
+            logger.info(f"[extract_command] Message {i}: MATCH via recipient")
             is_tool_call = True
-        elif msg.channel and "execute_bash" in msg.channel:
+        elif msg_channel and "execute_bash" in msg_channel:
+            logger.info(f"[extract_command] Message {i}: MATCH via channel")
             is_tool_call = True
-            
+
         if is_tool_call:
             try:
-                if msg.content and len(msg.content) > 0:
-                    content_text = msg.content[0].text
+                if msg_content and len(msg_content) > 0:
+                    content_text = msg_content[0].text
+                    logger.info(f"[extract_command] Attempting to parse content as JSON: {repr(content_text[:500] if len(content_text) > 500 else content_text)}")
                     try:
                         args = json.loads(content_text)
-                        return args.get("command")
-                    except json.JSONDecodeError:
+                        cmd = args.get("command")
+                        logger.info(f"[extract_command] Successfully extracted command from JSON: {repr(cmd[:200] if cmd and len(cmd) > 200 else cmd)}")
+                        return cmd
+                    except json.JSONDecodeError as e:
                         # Fallback: If not JSON, assume the entire text is the command
                         # This handles cases where model outputs raw bash code
+                        logger.info(f"[extract_command] JSON decode failed ({e}), using raw text as command")
                         return content_text.strip()
-            except (AttributeError, KeyError):
+            except (AttributeError, KeyError) as e:
+                logger.info(f"[extract_command] Message {i}: Exception accessing content: {e}")
                 continue
+
+    logger.info("[extract_command] No command found in any message")
     return None
 
 
