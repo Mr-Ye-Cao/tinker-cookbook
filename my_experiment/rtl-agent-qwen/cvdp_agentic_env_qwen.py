@@ -105,12 +105,73 @@ class CVDPAgenticEnvQwen(Env):
         self.docker_container_id: Optional[str] = None
         self.episode_ended = False
 
+        # Context management - Qwen3-8B has 32k context
+        self.max_context_tokens = 24000  # Leave room for max_tokens (8192)
+        self.keep_first_n_messages = 2   # Always keep system + initial user prompt
+
         # Setup workspace
         self._setup_workspace()
 
     @property
     def stop_condition(self) -> StopCondition:
         return self.renderer.get_stop_sequences()
+
+    def _estimate_tokens(self, text: str) -> int:
+        """Rough token estimate (4 chars per token for English)"""
+        return len(text) // 4
+
+    def _get_context_tokens(self) -> int:
+        """Estimate total tokens in conversation history"""
+        total = 0
+        for msg in self.conversation_history:
+            total += self._estimate_tokens(msg.get("content", ""))
+        return total
+
+    def _truncate_context_if_needed(self):
+        """
+        Truncate conversation history if it exceeds max_context_tokens.
+
+        Strategy:
+        1. Always keep first N messages (system + initial user prompt)
+        2. Keep most recent messages
+        3. Drop middle messages if needed
+        4. Also truncate individual long tool outputs
+        """
+        current_tokens = self._get_context_tokens()
+
+        if current_tokens <= self.max_context_tokens:
+            return
+
+        logger.info(f"Context too large ({current_tokens} tokens), truncating...")
+
+        # First, try truncating long tool outputs in recent messages
+        for i in range(self.keep_first_n_messages, len(self.conversation_history)):
+            msg = self.conversation_history[i]
+            content = msg.get("content", "")
+
+            # Truncate very long outputs (likely tool results)
+            if len(content) > 4000:
+                truncated = content[:2000] + "\n\n[... truncated for context management ...]\n\n" + content[-1000:]
+                self.conversation_history[i] = renderers.Message(
+                    role=msg["role"],
+                    content=truncated
+                )
+
+        # Recalculate
+        current_tokens = self._get_context_tokens()
+
+        if current_tokens <= self.max_context_tokens:
+            logger.info(f"Context reduced to {current_tokens} tokens after truncating outputs")
+            return
+
+        # If still too large, drop older messages (keep first N and recent ones)
+        while current_tokens > self.max_context_tokens and len(self.conversation_history) > self.keep_first_n_messages + 2:
+            # Remove the oldest message after the initial ones
+            removed = self.conversation_history.pop(self.keep_first_n_messages)
+            current_tokens = self._get_context_tokens()
+            logger.info(f"Dropped old message, context now {current_tokens} tokens")
+
+        logger.info(f"Final context size: {current_tokens} tokens, {len(self.conversation_history)} messages")
 
     def _build_prompt_with_context(self) -> str:
         """
@@ -466,7 +527,7 @@ class CVDPAgenticEnvQwen(Env):
                 # Format observation
                 observation_text = format_command_observation(command, stdout, stderr, returncode)
 
-            observation_text = truncate_output(observation_text, max_chars=10000)
+            observation_text = truncate_output(observation_text, max_chars=4000)  # Aggressive truncation for context
             all_observations.append(observation_text)
 
             logger.info("Command execution result:")
@@ -492,6 +553,9 @@ class CVDPAgenticEnvQwen(Env):
         if self.current_turn >= self.max_turns:
             logger.warning(f"Max turns ({self.max_turns}) reached. Ending episode.")
             return await self._handle_episode_end("max_turns")
+
+        # Truncate context if needed before next turn
+        self._truncate_context_if_needed()
 
         # Return new prompt (encoded history)
         model_input = self.renderer.build_generation_prompt(self.conversation_history)
