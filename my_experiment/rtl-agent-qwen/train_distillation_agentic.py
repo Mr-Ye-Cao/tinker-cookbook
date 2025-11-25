@@ -63,7 +63,7 @@ class CLIConfig:
     batch_size: int = 1  # Small batch for debugging
     group_size: int = 1  # Single rollout for debugging
     learning_rate: float = 1e-4
-    max_tokens: int = 4096  # Per turn (context accumulates across turns)
+    max_tokens: int = 8192  # Per turn - increased to allow thinking + action
 
     # Distillation hyperparameters
     kl_penalty_coef: float = 0.7
