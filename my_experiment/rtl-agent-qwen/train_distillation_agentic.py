@@ -35,7 +35,8 @@ class CLIConfig:
     """Command-line configuration for agentic on-policy distillation with Qwen models"""
 
     # Model configuration - Qwen models
-    student_model: str = "Qwen/Qwen3-4B"  # Smaller Qwen model as student
+    # Available models: Qwen3-8B, Qwen3-30B-A3B (MoE), Qwen3-32B, Qwen3-235B-Instruct-2507
+    student_model: str = "Qwen/Qwen3-8B"  # Smallest available Qwen model as student
     teacher_model: str = "Qwen/Qwen3-32B"  # Larger Qwen model as teacher
     teacher_checkpoint: str | None = None
     lora_rank: int = 32

@@ -5,7 +5,7 @@ set -e
 
 echo "====================================================================="
 echo "RTL Agent - Agentic On-Policy Distillation (Qwen)"
-echo "Teacher: Qwen/Qwen3-32B -> Student: Qwen/Qwen3-4B"
+echo "Teacher: Qwen/Qwen3-32B -> Student: Qwen/Qwen3-8B"
 echo "Mode: Multi-turn agentic (model executes bash commands)"
 echo "====================================================================="
 
@@ -40,7 +40,7 @@ WORKSPACE_DIR="./workspaces/qwen_agentic_workspace_1problem_${TIMESTAMP}"
 
 echo ""
 echo "Configuration:"
-echo "  Student: Qwen/Qwen3-4B"
+echo "  Student: Qwen/Qwen3-8B"
 echo "  Teacher: Qwen/Qwen3-32B"
 echo "  Dataset: $DATASET_PATH (1 problem)"
 echo "  Mode: Multi-turn agentic (max 50 turns per episode)"
@@ -65,7 +65,7 @@ echo ""
 
 python train_distillation_agentic.py \
   cvdp_jsonl_path="$DATASET_PATH" \
-  student_model=Qwen/Qwen3-4B \
+  student_model=Qwen/Qwen3-8B \
   teacher_model=Qwen/Qwen3-32B \
   batch_size=1 \
   group_size=1 \

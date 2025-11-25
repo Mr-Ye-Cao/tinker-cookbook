@@ -7,8 +7,10 @@ Agentic on-policy distillation for RTL code generation using Qwen models.
 This is a Qwen-adapted version of the RTL agent distillation setup. The key differences from the GPT-OSS version:
 
 1. **Models**: Uses Qwen3 models instead of GPT-OSS
-   - Student: `Qwen/Qwen3-4B`
+   - Student: `Qwen/Qwen3-8B` (smallest available)
    - Teacher: `Qwen/Qwen3-32B`
+
+   Available models on tinker: `Qwen3-8B`, `Qwen3-30B-A3B` (MoE), `Qwen3-32B`, `Qwen3-235B-Instruct-2507`
 
 2. **Renderer**: Uses standard tinker renderers (`qwen3`, `qwen3_disable_thinking`) instead of Harmony encoding
 
@@ -44,7 +46,7 @@ This is a Qwen-adapted version of the RTL agent distillation setup. The key diff
 3. Or run directly with Python:
    ```bash
    python train_distillation_agentic.py \
-     student_model=Qwen/Qwen3-4B \
+     student_model=Qwen/Qwen3-8B \
      teacher_model=Qwen/Qwen3-32B \
      cvdp_jsonl_path=cvdp_1_problem.jsonl
    ```
@@ -76,7 +78,7 @@ This is a Qwen-adapted version of the RTL agent distillation setup. The key diff
 
 See `CLIConfig` in `train_distillation_agentic.py` for all options:
 
-- `student_model`: Student model name (default: `Qwen/Qwen3-4B`)
+- `student_model`: Student model name (default: `Qwen/Qwen3-8B`)
 - `teacher_model`: Teacher model name (default: `Qwen/Qwen3-32B`)
 - `renderer_name`: Override auto-detected renderer
 - `max_turns`: Maximum turns per episode (default: 50)
