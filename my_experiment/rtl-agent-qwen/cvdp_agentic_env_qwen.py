@@ -106,7 +106,7 @@ class CVDPAgenticEnvQwen(Env):
         self.episode_ended = False
 
         # Context management - Qwen3-8B has 32k context
-        self.max_context_tokens = 20000  # Leave room for max_tokens=8192 (20k + 8k = 28k, buffer for safety)
+        self.max_context_tokens = 16000  # Leave room for max_tokens=8192 (16k + 8k = 24k, safe buffer)
         self.keep_first_n_messages = 2   # Always keep system + initial user prompt
 
         # Setup workspace
