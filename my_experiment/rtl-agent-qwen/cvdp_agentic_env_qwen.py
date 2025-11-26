@@ -61,7 +61,7 @@ class CVDPAgenticEnvQwen(Env):
         renderer: renderers.Renderer,
         system_message: str | None = None,
         docker_image: str = "gpt-oss-20b-agent-base:latest",
-        timeout_seconds: int = 600,
+        timeout_seconds: int = 30,  # Per-command timeout (avoid hanging simulations)
         max_turns: int = 50,
         format_coef: float = 0.1,
         syntax_coef: float = 0.3,
@@ -106,7 +106,7 @@ class CVDPAgenticEnvQwen(Env):
         self.episode_ended = False
 
         # Context management - Qwen3-8B has 32k context
-        self.max_context_tokens = 24000  # Leave room for max_tokens (8192)
+        self.max_context_tokens = 20000  # Leave room for max_tokens=8192 (20k + 8k = 28k, buffer for safety)
         self.keep_first_n_messages = 2   # Always keep system + initial user prompt
 
         # Setup workspace
@@ -411,8 +411,17 @@ class CVDPAgenticEnvQwen(Env):
         2. ```bash ... ``` code blocks (fallback)
 
         Returns a list of dicts: {'command': str|None, 'error': str|None}
+        Special case: Returns [{'command': None, 'error': 'TRUNCATED'}] if tool call was cut off
         """
         commands = []
+
+        # First, check for truncated tool calls (has opening tag but no closing tag)
+        has_tool_call_open = '<tool_call>' in generated_text
+        has_tool_call_close = '</tool_call>' in generated_text
+
+        if has_tool_call_open and not has_tool_call_close:
+            logger.warning("[extract] Detected TRUNCATED tool_call - response was cut off")
+            return [{"command": None, "error": "TRUNCATED"}]
 
         # Method 1: Parse <tool_call> tags (Qwen's native format)
         tool_call_pattern = r'<tool_call>\s*(.*?)\s*</tool_call>'
@@ -506,6 +515,40 @@ class CVDPAgenticEnvQwen(Env):
             # No command found - treat as final answer attempt
             logger.info("No command found in response - checking for final answer")
             return await self._handle_final_answer(generated_text)
+
+        # Check for truncated tool call (special case)
+        if len(extracted_items) == 1 and extracted_items[0].get("error") == "TRUNCATED":
+            logger.warning("Tool call was truncated - giving feedback to model")
+            truncation_feedback = (
+                "ERROR: Your response was cut off before the </tool_call> tag. "
+                "Your command was too long and got truncated.\n\n"
+                "Please try again with a SHORTER command. Tips:\n"
+                "- Break large file writes into multiple smaller commands\n"
+                "- Instead of writing entire files, write sections incrementally\n"
+                "- Use 'echo' or 'printf' for smaller file contents\n"
+                "- Focus on one task at a time\n\n"
+                "Try your command again, but make it shorter."
+            )
+            self.conversation_history.append(
+                renderers.Message(role="user", content=f"Tool output:\n{truncation_feedback}")
+            )
+            # Check for max turns
+            if self.current_turn >= self.max_turns:
+                logger.warning(f"Max turns ({self.max_turns}) reached. Ending episode.")
+                return await self._handle_episode_end("max_turns")
+
+            # Truncate context if needed before retry
+            self._truncate_context_if_needed()
+
+            # Return new prompt for retry
+            model_input = self.renderer.build_generation_prompt(self.conversation_history)
+            return StepResult(
+                reward=0.0,
+                episode_done=False,
+                next_observation=model_input,
+                next_stop_condition=self.stop_condition,
+                metrics={"status": 0}
+            )
 
         # Execute all commands and collect results
         all_observations = []

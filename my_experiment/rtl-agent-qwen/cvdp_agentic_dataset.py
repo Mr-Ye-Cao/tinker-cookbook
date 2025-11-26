@@ -38,7 +38,7 @@ class CVDPAgenticDatasetQwen(RLDataset):
         renderer: renderers.Renderer,
         workspace_dir: str,
         docker_image: str = "gpt-oss-20b-agent-base:latest",
-        timeout_seconds: int = 600,
+        timeout_seconds: int = 30,  # Per-command timeout
         max_turns: int = 50,
         format_coef: float = 0.1,
         syntax_coef: float = 0.3,
@@ -148,7 +148,7 @@ class CVDPAgenticDatasetBuilderQwen(RLDatasetBuilder):
     # Optional parameters
     workspace_dir: str = "/tmp/cvdp_agentic_workspace_qwen"
     docker_image: str = "gpt-oss-20b-agent-base:latest"
-    timeout_seconds: int = 600
+    timeout_seconds: int = 30  # Per-command timeout
     max_turns: int = 50
     format_coef: float = 0.1
     syntax_coef: float = 0.3

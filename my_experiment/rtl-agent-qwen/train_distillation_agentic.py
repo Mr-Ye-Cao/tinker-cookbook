@@ -51,7 +51,7 @@ class CLIConfig:
     # CVDP agentic configuration
     workspace_dir: str = "/tmp/cvdp_agentic_workspace_qwen"
     docker_image: str = "gpt-oss-20b-agent-base:latest"
-    timeout_seconds: int = 600
+    timeout_seconds: int = 30  # Per-command timeout (reduced from 600 to avoid hanging simulations)
     max_turns: int = 50
 
     # Reward shaping

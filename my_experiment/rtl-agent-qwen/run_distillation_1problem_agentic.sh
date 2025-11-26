@@ -46,7 +46,8 @@ echo "  Dataset: $DATASET_PATH (1 problem)"
 echo "  Mode: Multi-turn agentic (max 50 turns per episode)"
 echo "  Batch size: 1 (single problem)"
 echo "  Group size: 1 (single rollout for debugging)"
-echo "  Max tokens: 4096 (per turn)"
+echo "  Max tokens: 8192 (per turn)"
+echo "  Command timeout: 30 seconds (per command)"
 echo "  KL penalty coefficient: 0.7"
 echo "  Docker image: gpt-oss-20b-agent-base:latest"
 echo ""
@@ -70,12 +71,13 @@ python train_distillation_agentic.py \
   batch_size=1 \
   group_size=1 \
   learning_rate=1e-4 \
-  max_tokens=4096 \
+  max_tokens=8192 \
   renderer_name=qwen3_disable_thinking \
   max_turns=50 \
   kl_penalty_coef=0.7 \
   lora_rank=32 \
   docker_image=gpt-oss-20b-agent-base:latest \
+  timeout_seconds=30 \
   workspace_dir="$WORKSPACE_DIR" \
   log_path="$LOG_DIR" \
   eval_every=1 \
