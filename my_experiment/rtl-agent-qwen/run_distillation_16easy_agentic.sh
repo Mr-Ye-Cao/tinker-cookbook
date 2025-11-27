@@ -24,13 +24,26 @@ else
     echo "Warning: Virtual environment not found. Using system Python."
 fi
 
-# Set API key
+# Set API keys
 export TINKER_API_KEY="${TINKER_API_KEY:-$(cat ../../.env 2>/dev/null | grep TINKER_API_KEY | cut -d'=' -f2 || echo '')}"
+
+# Get WANDB_API_KEY from netrc if not already set
+if [ -z "$WANDB_API_KEY" ]; then
+    WANDB_API_KEY="$(grep -A2 'api.wandb.ai' ~/.netrc 2>/dev/null | grep password | awk '{print $2}')"
+    export WANDB_API_KEY
+fi
 
 if [ -z "$TINKER_API_KEY" ]; then
     echo "Error: TINKER_API_KEY not set"
     echo "Please set TINKER_API_KEY environment variable or create ../../.env file"
     exit 1
+fi
+
+if [ -z "$WANDB_API_KEY" ]; then
+    echo "Warning: WANDB_API_KEY not set - wandb logging will be disabled"
+    echo "Run 'wandb login' to enable wandb logging"
+else
+    echo "WANDB_API_KEY found (length: ${#WANDB_API_KEY}) - wandb logging enabled"
 fi
 
 DATASET_PATH="cvdp_16_easy_problems.jsonl"
@@ -80,6 +93,7 @@ python train_distillation_agentic.py \
   timeout_seconds=30 \
   workspace_dir="$WORKSPACE_DIR" \
   log_path="$LOG_DIR" \
+  wandb_project=rtl-agent-qwen \
   eval_every=5 \
   save_every=5 \
   behavior_if_log_dir_exists=delete

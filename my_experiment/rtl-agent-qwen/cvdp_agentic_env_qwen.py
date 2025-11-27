@@ -276,6 +276,7 @@ class CVDPAgenticEnvQwen(Env):
             '-d',  # Detached mode
             '-i',  # Keep STDIN open
             '--rm',  # Auto-remove when stopped
+            '--user', f'{os.getuid()}:{os.getgid()}',  # Run as current user to avoid root ownership issues
             '-v', f'{abs_workspace}:/code',  # Mount workspace
             '-w', '/code',  # Working directory
             self.docker_image,
