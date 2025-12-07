@@ -45,6 +45,7 @@ class CVDPAgenticDatasetQwen(RLDataset):
         test_coef: float = 1.0,
         dataset_name: str = "cvdp_agentic_qwen",
         override_system_message: str | None = None,
+        log_path: str | None = None,
     ):
         """
         Args:
@@ -61,6 +62,7 @@ class CVDPAgenticDatasetQwen(RLDataset):
             test_coef: Reward coefficient for passing tests
             dataset_name: Name for logging/metrics
             override_system_message: If provided, use this instead of JSONL system_message
+            log_path: Directory for turn logs
         """
         self.problems = problems
         self.batch_size = batch_size
@@ -75,6 +77,7 @@ class CVDPAgenticDatasetQwen(RLDataset):
         self.test_coef = test_coef
         self.dataset_name = dataset_name
         self.override_system_message = override_system_message
+        self.log_path = log_path
 
         logger.info(
             f"Loaded CVDP agentic dataset (Qwen): {len(problems)} problems, "
@@ -117,6 +120,7 @@ class CVDPAgenticDatasetQwen(RLDataset):
                     format_coef=self.format_coef,
                     syntax_coef=self.syntax_coef,
                     test_coef=self.test_coef,
+                    log_path=self.log_path,
                 ),
                 num_envs=self.group_size,
                 dataset_name=self.dataset_name,
@@ -159,6 +163,9 @@ class CVDPAgenticDatasetBuilderQwen(RLDatasetBuilder):
     # Train/test split
     test_split: float = 0.0  # Fraction of problems for test set (0.0 = no test set)
     test_jsonl_path: str | None = None  # Optional separate test set
+
+    # Logging
+    log_path: str | None = None  # Directory for turn logs
 
     async def __call__(self) -> Tuple[CVDPAgenticDatasetQwen, CVDPAgenticDatasetQwen | None]:
         """
@@ -208,6 +215,7 @@ class CVDPAgenticDatasetBuilderQwen(RLDatasetBuilder):
             test_coef=self.test_coef,
             dataset_name=f"{self.dataset_name}_train",
             override_system_message=self.override_system_message,
+            log_path=self.log_path,
         )
 
         # Create test dataset
@@ -227,6 +235,7 @@ class CVDPAgenticDatasetBuilderQwen(RLDatasetBuilder):
                 test_coef=self.test_coef,
                 dataset_name=f"{self.dataset_name}_test",
                 override_system_message=self.override_system_message,
+                log_path=self.log_path,
             )
 
         return train_dataset, test_dataset

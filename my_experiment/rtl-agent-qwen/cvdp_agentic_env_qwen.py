@@ -66,6 +66,7 @@ class CVDPAgenticEnvQwen(Env):
         format_coef: float = 0.1,
         syntax_coef: float = 0.3,
         test_coef: float = 1.0,
+        log_path: str | None = None,  # Directory for turn logs (if None, uses workspace_dir)
     ):
         """
         Args:
@@ -82,6 +83,7 @@ class CVDPAgenticEnvQwen(Env):
             format_coef: Reward coefficient for valid format
             syntax_coef: Reward coefficient for syntax validity
             test_coef: Reward coefficient for passing tests
+            log_path: Directory for turn logs (if None, uses workspace_dir)
         """
         self.problem_id = problem_id
         self.prompt = prompt
@@ -89,6 +91,7 @@ class CVDPAgenticEnvQwen(Env):
         self.harness_config = harness_config
         self.system_message = system_message
         self.workspace_dir = workspace_dir
+        self.log_path = log_path
         self.renderer = renderer
         self.docker_image = docker_image
         self.timeout_seconds = timeout_seconds
@@ -108,6 +111,9 @@ class CVDPAgenticEnvQwen(Env):
         # Context management - Qwen3-8B has 32k context
         self.max_context_tokens = 16000  # Leave room for max_tokens=8192 (16k + 8k = 24k, safe buffer)
         self.keep_first_n_messages = 2   # Always keep system + initial user prompt
+
+        # Per-turn logging directory
+        self.turn_logs_dir: Optional[str] = None
 
         # Setup workspace
         self._setup_workspace()
@@ -260,6 +266,66 @@ class CVDPAgenticEnvQwen(Env):
 
         logger.info(f"Workspace setup complete: {problem_workspace}")
 
+        # Setup per-turn logs directory (use log_path if provided, otherwise workspace_dir)
+        if self.log_path:
+            self.turn_logs_dir = os.path.join(self.log_path, "turn_logs", self.problem_id)
+        else:
+            self.turn_logs_dir = os.path.join(problem_workspace, "turn_logs")
+        os.makedirs(self.turn_logs_dir, exist_ok=True)
+        logger.info(f"Turn logs directory: {self.turn_logs_dir}")
+
+    def _write_turn_log(self, turn: int, section: str, content: str):
+        """
+        Write content to a per-turn log file.
+
+        Args:
+            turn: Turn number (0 for initial, 1+ for subsequent turns)
+            section: Section name (e.g., "INPUT_PROMPT", "MODEL_OUTPUT", "COMMAND_RESULT")
+            content: Content to write
+        """
+        if not self.turn_logs_dir:
+            return
+
+        log_file = os.path.join(self.turn_logs_dir, f"turn_{turn}.log")
+        with open(log_file, 'a') as f:
+            f.write("=" * 100 + "\n")
+            f.write(f"[{section}]\n")
+            f.write("=" * 100 + "\n")
+            f.write(content + "\n")
+            f.write("\n")
+
+    def _write_episode_summary(self, reason: str, eval_result: Dict, reward: float):
+        """
+        Write an episode summary file with overview of all turns.
+        """
+        if not self.turn_logs_dir:
+            return
+
+        summary_file = os.path.join(self.turn_logs_dir, "episode_summary.txt")
+        with open(summary_file, 'w') as f:
+            f.write("=" * 100 + "\n")
+            f.write("EPISODE SUMMARY\n")
+            f.write("=" * 100 + "\n\n")
+
+            f.write(f"Problem ID: {self.problem_id}\n")
+            f.write(f"Total Turns: {self.current_turn}/{self.max_turns}\n")
+            f.write(f"End Reason: {reason}\n\n")
+
+            f.write("EVALUATION RESULTS:\n")
+            f.write(f"  Format Valid: {eval_result['format_valid']}\n")
+            f.write(f"  Syntax Valid: {eval_result['syntax_valid']}\n")
+            f.write(f"  Tests Passed: {eval_result['tests_passed']}\n")
+            f.write(f"  Pass Rate: {eval_result.get('pass_rate', 0.0):.2%}\n")
+            f.write(f"  Final Reward: {reward:.4f}\n\n")
+
+            f.write("TURN LOG FILES:\n")
+            for i in range(self.current_turn + 1):
+                turn_file = f"turn_{i}.log"
+                if os.path.exists(os.path.join(self.turn_logs_dir, turn_file)):
+                    f.write(f"  - {turn_file}\n")
+
+            f.write("\n" + "=" * 100 + "\n")
+
     async def _start_docker_container(self) -> str:
         """
         Start persistent Docker container for this episode.
@@ -325,7 +391,7 @@ class CVDPAgenticEnvQwen(Env):
             'bash', '-c', command
         ]
 
-        logger.info(f"Executing command in container: {command[:100]}")
+        logger.info(f"Executing command in container: {command}")
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -384,13 +450,9 @@ class CVDPAgenticEnvQwen(Env):
         # Store conversation history
         self.conversation_history = messages.copy()
 
-        # Log the prompt
-        logger.info("=" * 100)
-        logger.info("AGENTIC EPISODE START (Qwen)")
-        logger.info("=" * 100)
-        logger.info(f"Problem ID: {self.problem_id}")
-        logger.info(f"Max turns: {self.max_turns}")
-        logger.info("=" * 100)
+        # Log episode start
+        logger.info(f"AGENTIC EPISODE START: {self.problem_id} (max {self.max_turns} turns)")
+        logger.info(f"Turn logs: {self.turn_logs_dir}")
 
         # Start Docker container
         try:
@@ -401,6 +463,12 @@ class CVDPAgenticEnvQwen(Env):
 
         # Use standard tinker renderer to build prompt
         model_input = self.renderer.build_generation_prompt(self.conversation_history)
+
+        # Log the input prompt to per-turn log file (turn 0 = initial)
+        prompt_text = self.renderer.tokenizer.decode(list(model_input.to_ints()))
+        self._write_turn_log(0, "EPISODE_INFO", f"Problem ID: {self.problem_id}\nMax turns: {self.max_turns}")
+        self._write_turn_log(0, "INPUT_PROMPT", prompt_text)
+
         return model_input, self.stop_condition
 
     def _extract_commands_from_text(self, generated_text: str) -> list[dict[str, str | None]]:
@@ -496,13 +564,10 @@ class CVDPAgenticEnvQwen(Env):
         else:
             generated_text = str(action)
 
-        logger.info("=" * 100)
         logger.info(f"TURN {self.current_turn}/{self.max_turns}")
-        logger.info("=" * 100)
-        logger.info(f"Model response ({len(generated_text)} chars):")
-        logger.info("-" * 100)
-        logger.info(generated_text[:2000] if len(generated_text) > 2000 else generated_text)
-        logger.info("=" * 100)
+
+        # Log model output to per-turn log file
+        self._write_turn_log(self.current_turn, "MODEL_OUTPUT", generated_text)
 
         # Add assistant response to history
         self.conversation_history.append(
@@ -543,6 +608,12 @@ class CVDPAgenticEnvQwen(Env):
 
             # Return new prompt for retry
             model_input = self.renderer.build_generation_prompt(self.conversation_history)
+
+            # Log the truncation feedback and next input prompt
+            self._write_turn_log(self.current_turn, "TRUNCATION_FEEDBACK", truncation_feedback)
+            prompt_text = self.renderer.tokenizer.decode(list(model_input.to_ints()))
+            self._write_turn_log(self.current_turn, "NEXT_INPUT_PROMPT", prompt_text)
+
             return StepResult(
                 reward=0.0,
                 episode_done=False,
@@ -574,10 +645,9 @@ class CVDPAgenticEnvQwen(Env):
             observation_text = truncate_output(observation_text, max_chars=4000)  # Aggressive truncation for context
             all_observations.append(observation_text)
 
-            logger.info("Command execution result:")
-            logger.info("-" * 100)
-            logger.info(observation_text[:1000] if len(observation_text) > 1000 else observation_text)
-            logger.info("=" * 100)
+            # Log command and result to per-turn log file
+            self._write_turn_log(self.current_turn, f"COMMAND_{i+1}", command if command else f"Error: {error}")
+            self._write_turn_log(self.current_turn, f"COMMAND_{i+1}_RESULT", observation_text)
 
             # Check if episode should end (only for valid commands)
             if not error:
@@ -603,6 +673,11 @@ class CVDPAgenticEnvQwen(Env):
 
         # Return new prompt (encoded history)
         model_input = self.renderer.build_generation_prompt(self.conversation_history)
+
+        # Log the next input prompt to per-turn log file (for next turn)
+        prompt_text = self.renderer.tokenizer.decode(list(model_input.to_ints()))
+        self._write_turn_log(self.current_turn + 1, "INPUT_PROMPT", prompt_text)
+
         return StepResult(
             reward=0.0,
             episode_done=False,
@@ -650,17 +725,20 @@ class CVDPAgenticEnvQwen(Env):
         reward = self._calculate_reward(eval_result)
 
         # Log results
-        logger.info("=" * 100)
-        logger.info("EPISODE END")
-        logger.info("=" * 100)
-        logger.info(f"Reason: {reason}")
-        logger.info(f"Turns used: {self.current_turn}/{self.max_turns}")
-        logger.info(f"Format Valid: {eval_result['format_valid']}")
-        logger.info(f"Syntax Valid: {eval_result['syntax_valid']}")
-        logger.info(f"Tests Passed: {eval_result['tests_passed']}")
-        logger.info(f"Pass Rate: {eval_result.get('pass_rate', 0.0):.2%}")
-        logger.info(f"Final Reward: {reward:.4f}")
-        logger.info("=" * 100)
+        episode_summary = (
+            f"Reason: {reason}\n"
+            f"Turns used: {self.current_turn}/{self.max_turns}\n"
+            f"Format Valid: {eval_result['format_valid']}\n"
+            f"Syntax Valid: {eval_result['syntax_valid']}\n"
+            f"Tests Passed: {eval_result['tests_passed']}\n"
+            f"Pass Rate: {eval_result.get('pass_rate', 0.0):.2%}\n"
+            f"Final Reward: {reward:.4f}"
+        )
+        logger.info(f"EPISODE END: {reason}, reward={reward:.4f}")
+        self._write_turn_log(self.current_turn, "EPISODE_END", episode_summary)
+
+        # Write episode summary file
+        self._write_episode_summary(reason, eval_result, reward)
 
         # Stop Docker container
         await self._stop_docker_container()

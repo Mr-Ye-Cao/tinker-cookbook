@@ -156,6 +156,7 @@ async def main(cli_config: CLIConfig):
         test_jsonl_path=cli_config.test_jsonl_path,
         test_split=cli_config.test_split,
         override_system_message=override_system_message,
+        log_path=log_path,
     )
 
     # Create teacher config
