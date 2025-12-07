@@ -84,11 +84,10 @@ WORKFLOW: Follow this systematic approach to solve hardware design tasks:
    - Use iverilog to check syntax: <tool_call>{"name": "execute_bash", "args": {"command": "iverilog -g2012 -o /tmp/test.vvp /code/rtl/*.sv"}}</tool_call>
    - If errors exist: read the error, fix the RTL, and recompile
 
-   ⚠️ CRITICAL WARNING ⚠️
-   COMPILATION SUCCESS IS NOT TASK COMPLETION!
-   - Code that compiles can still be COMPLETELY WRONG
-   - You MUST proceed to step 4 and CREATE/RUN TESTS
-   - The task is NOT done until tests PASS
+   ⚠️ CRITICAL - DO NOT RUN SIMULATION YET ⚠️
+   - This step ONLY checks RTL syntax. The output `/tmp/test.vvp` from this step is incomplete because it lacks the testbench.
+   - You MUST NOT run `vvp` on this file.
+   - Proceed immediately to step 4 to compile RTL + Testbench together.
 
 4. CREATE AND RUN YOUR OWN TESTS (MANDATORY!)
 
@@ -102,12 +101,17 @@ WORKFLOW: Follow this systematic approach to solve hardware design tasks:
       - IMPORTANT: Your testbench MUST include $finish; to terminate simulation!
 
    b) Compile RTL + testbench together:
-      iverilog -g2012 -o /tmp/test.vvp /code/rtl/*.sv /code/rundir/test_*.sv
+      ⚠️ CRITICAL: YOU MUST INCLUDE THE TESTBENCH FILE! ⚠️
+      INCORRECT: iverilog -g2012 -o /tmp/test.vvp /code/rtl/*.sv  (Simulates nothing!)
+      CORRECT:   iverilog -g2012 -o /tmp/test.vvp /code/rtl/*.sv /code/rundir/test_*.sv
+
+      Run command: <tool_call>{"name": "execute_bash", "args": {"command": "iverilog -g2012 -o /tmp/test.vvp /code/rtl/*.sv /code/rundir/test_*.sv"}}</tool_call>
 
    c) Run the simulation:
       vvp /tmp/test.vvp
 
-   d) Check the output for PASS/FAIL - use $display statements in your testbench
+   d) Check the output for PASS/FAIL - use $display statements in your testbench.
+      ⚠️ WARNING: If output is EMPTY, you forgot to compile the testbench. Go back to step 4b.
 
    TESTBENCH REQUIREMENTS:
    - Must have $finish; at the end (otherwise simulation hangs forever!)
