@@ -9,11 +9,14 @@ compatible with Qwen models.
 """
 
 import asyncio
+import os
+import shutil
 import json
 import logging
-import os
+import time
 import re
-from typing import Dict, Optional, List
+import uuid
+from typing import Dict, Any, List, Optional, Tuple, Union
 
 import tinker
 from tinker_cookbook import renderers
@@ -90,12 +93,17 @@ class CVDPAgenticEnvQwen(Env):
         self.context_files = context_files
         self.harness_config = harness_config
         self.system_message = system_message
-        self.workspace_dir = workspace_dir
-        self.log_path = log_path
         self.renderer = renderer
+        self.max_turns = max_turns
         self.docker_image = docker_image
         self.timeout_seconds = timeout_seconds
-        self.max_turns = max_turns
+        
+        # Generate unique worker ID for this environment instance
+        self.worker_id = str(uuid.uuid4())[:8]
+        
+        # Setup workspace and logging
+        self.workspace_dir = workspace_dir
+        self.log_path = log_path
 
         # Reward coefficients
         self.format_coef = format_coef
@@ -247,7 +255,8 @@ class CVDPAgenticEnvQwen(Env):
 
     def _setup_workspace(self):
         """Create CVDP workspace with context files"""
-        problem_workspace = os.path.join(self.workspace_dir, self.problem_id)
+        # Create unique workspace for this worker to prevent collisions in group_size > 1
+        problem_workspace = os.path.join(self.workspace_dir, f"{self.problem_id}_{self.worker_id}")
         os.makedirs(problem_workspace, exist_ok=True)
 
         # Write context files (docs, verif, rtl templates, etc.)
@@ -268,7 +277,8 @@ class CVDPAgenticEnvQwen(Env):
 
         # Setup per-turn logs directory (use log_path if provided, otherwise workspace_dir)
         if self.log_path:
-            self.turn_logs_dir = os.path.join(self.log_path, "turn_logs", self.problem_id)
+            # Also make logs unique per worker
+            self.turn_logs_dir = os.path.join(self.log_path, "turn_logs", f"{self.problem_id}_{self.worker_id}")
         else:
             self.turn_logs_dir = os.path.join(problem_workspace, "turn_logs")
         os.makedirs(self.turn_logs_dir, exist_ok=True)
@@ -283,7 +293,7 @@ class CVDPAgenticEnvQwen(Env):
         This keeps each task's logs separate from others.
         """
         # Create a unique logger for this task
-        self.task_logger = logging.getLogger(f"cvdp_task.{self.problem_id}")
+        self.task_logger = logging.getLogger(f"cvdp_task.{self.problem_id}.{self.worker_id}")
         self.task_logger.setLevel(logging.INFO)
 
         # Remove any existing handlers to avoid duplicates
@@ -365,7 +375,7 @@ class CVDPAgenticEnvQwen(Env):
         Returns:
             Container ID
         """
-        problem_workspace = os.path.join(self.workspace_dir, self.problem_id)
+        problem_workspace = os.path.join(self.workspace_dir, f"{self.problem_id}_{self.worker_id}")
         abs_workspace = os.path.abspath(problem_workspace)
 
         # Start container with workspace mounted at /code
@@ -735,8 +745,8 @@ class CVDPAgenticEnvQwen(Env):
         if self.docker_container_id:
             self.task_logger.info("Copying files from container to workspace...")
             try:
-                # Copy /code/. to workspace_dir/problem_id/
-                dest_dir = os.path.join(self.workspace_dir, self.problem_id)
+                # Copy /code/. to workspace_dir/problem_id_workerid/
+                dest_dir = os.path.join(self.workspace_dir, f"{self.problem_id}_{self.worker_id}")
                 proc = await asyncio.create_subprocess_exec(
                     'docker', 'cp', f'{self.docker_container_id}:/code/.', dest_dir,
                     stdout=asyncio.subprocess.PIPE,
@@ -837,7 +847,7 @@ class CVDPAgenticEnvQwen(Env):
         Returns:
             Dict with evaluation results
         """
-        problem_workspace = os.path.join(self.workspace_dir, self.problem_id)
+        problem_workspace = os.path.join(self.workspace_dir, f"{self.problem_id}_{self.worker_id}")
         harness_dir = os.path.join(problem_workspace, "harness", "1")
         os.makedirs(harness_dir, exist_ok=True)
 
