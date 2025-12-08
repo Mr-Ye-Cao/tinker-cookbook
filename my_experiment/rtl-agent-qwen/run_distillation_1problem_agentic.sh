@@ -72,7 +72,7 @@ python train_distillation_agentic.py \
   group_size=1 \
   learning_rate=1e-4 \
   max_tokens=6144 \
-  renderer_name=qwen3_disable_thinking \
+  renderer_name=qwen3_keep_thinking \
   max_turns=50 \
   kl_penalty_coef=0.7 \
   lora_rank=32 \
