@@ -148,7 +148,7 @@ class CVDPAgenticEnvQwen(Env):
         if current_tokens <= self.max_context_tokens:
             return
 
-        logger.info(f"Context too large ({current_tokens} tokens), truncating...")
+        self.task_logger.info(f"Context too large ({current_tokens} tokens), truncating...")
 
         # First, try truncating long tool outputs in recent messages
         for i in range(self.keep_first_n_messages, len(self.conversation_history)):
@@ -167,7 +167,7 @@ class CVDPAgenticEnvQwen(Env):
         current_tokens = self._get_context_tokens()
 
         if current_tokens <= self.max_context_tokens:
-            logger.info(f"Context reduced to {current_tokens} tokens after truncating outputs")
+            self.task_logger.info(f"Context reduced to {current_tokens} tokens after truncating outputs")
             return
 
         # If still too large, drop older messages (keep first N and recent ones)
@@ -175,9 +175,9 @@ class CVDPAgenticEnvQwen(Env):
             # Remove the oldest message after the initial ones
             removed = self.conversation_history.pop(self.keep_first_n_messages)
             current_tokens = self._get_context_tokens()
-            logger.info(f"Dropped old message, context now {current_tokens} tokens")
+            self.task_logger.info(f"Dropped old message, context now {current_tokens} tokens")
 
-        logger.info(f"Final context size: {current_tokens} tokens, {len(self.conversation_history)} messages")
+        self.task_logger.info(f"Final context size: {current_tokens} tokens, {len(self.conversation_history)} messages")
 
     def _build_prompt_with_context(self) -> str:
         """
@@ -274,6 +274,38 @@ class CVDPAgenticEnvQwen(Env):
         os.makedirs(self.turn_logs_dir, exist_ok=True)
         logger.info(f"Turn logs directory: {self.turn_logs_dir}")
 
+        # Setup per-task logger with its own file handler
+        self._setup_task_logger()
+
+    def _setup_task_logger(self):
+        """
+        Setup a per-task logger that writes to a separate log file.
+        This keeps each task's logs separate from others.
+        """
+        # Create a unique logger for this task
+        self.task_logger = logging.getLogger(f"cvdp_task.{self.problem_id}")
+        self.task_logger.setLevel(logging.INFO)
+
+        # Remove any existing handlers to avoid duplicates
+        self.task_logger.handlers = []
+
+        # Create file handler for task-specific log
+        task_log_file = os.path.join(self.turn_logs_dir, "task.log")
+        file_handler = logging.FileHandler(task_log_file, mode='w')
+        file_handler.setLevel(logging.INFO)
+
+        # Create formatter
+        formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+        file_handler.setFormatter(formatter)
+
+        # Add handler to task logger
+        self.task_logger.addHandler(file_handler)
+
+        # Prevent propagation to root logger (avoid duplicate logs)
+        self.task_logger.propagate = False
+
+        self.task_logger.info(f"Task logger initialized for {self.problem_id}")
+
     def _write_turn_log(self, turn: int, section: str, content: str):
         """
         Write content to a per-turn log file.
@@ -349,7 +381,7 @@ class CVDPAgenticEnvQwen(Env):
             'bash',  # Keep container running
         ]
 
-        logger.info(f"Starting Docker container: {self.docker_image}")
+        self.task_logger.info(f"Starting Docker container: {self.docker_image}")
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -361,11 +393,11 @@ class CVDPAgenticEnvQwen(Env):
 
         if proc.returncode != 0:
             error_msg = stderr.decode('utf-8', errors='replace')
-            logger.error(f"Failed to start Docker container: {error_msg}")
+            self.task_logger.error(f"Failed to start Docker container: {error_msg}")
             raise RuntimeError(f"Docker container start failed: {error_msg}")
 
         container_id = stdout.decode('utf-8').strip()
-        logger.info(f"Docker container started: {container_id[:12]}")
+        self.task_logger.info(f"Docker container started: {container_id[:12]}")
 
         return container_id
 
@@ -391,7 +423,7 @@ class CVDPAgenticEnvQwen(Env):
             'bash', '-c', command
         ]
 
-        logger.info(f"Executing command in container: {command}")
+        self.task_logger.info(f"Executing command in container: {command}")
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -409,18 +441,18 @@ class CVDPAgenticEnvQwen(Env):
             stderr_str = stderr.decode('utf-8', errors='replace')
             returncode = proc.returncode
 
-            logger.info(f"Command completed with exit code {returncode}")
+            self.task_logger.info(f"Command completed with exit code {returncode}")
 
             return stdout_str, stderr_str, returncode
 
         except asyncio.TimeoutError:
-            logger.warning(f"Command timeout: {command[:100]}")
+            self.task_logger.warning(f"Command timeout: {command[:100]}")
             return "", "Command timed out", 124
 
     async def _stop_docker_container(self):
         """Stop and cleanup Docker container"""
         if self.docker_container_id:
-            logger.info(f"Stopping Docker container: {self.docker_container_id[:12]}")
+            self.task_logger.info(f"Stopping Docker container: {self.docker_container_id[:12]}")
             try:
                 await asyncio.create_subprocess_exec(
                     'docker', 'stop', self.docker_container_id,
@@ -428,7 +460,7 @@ class CVDPAgenticEnvQwen(Env):
                     stderr=asyncio.subprocess.DEVNULL,
                 )
             except Exception as e:
-                logger.error(f"Error stopping container: {e}")
+                self.task_logger.error(f"Error stopping container: {e}")
 
     async def initial_observation(self) -> tuple[Observation, StopCondition]:
         """
@@ -451,14 +483,14 @@ class CVDPAgenticEnvQwen(Env):
         self.conversation_history = messages.copy()
 
         # Log episode start
-        logger.info(f"AGENTIC EPISODE START: {self.problem_id} (max {self.max_turns} turns)")
-        logger.info(f"Turn logs: {self.turn_logs_dir}")
+        self.task_logger.info(f"AGENTIC EPISODE START: {self.problem_id} (max {self.max_turns} turns)")
+        self.task_logger.info(f"Turn logs: {self.turn_logs_dir}")
 
         # Start Docker container
         try:
             self.docker_container_id = await self._start_docker_container()
         except Exception as e:
-            logger.error(f"Failed to start Docker container: {e}")
+            self.task_logger.error(f"Failed to start Docker container: {e}")
             # Continue without container - will fail gracefully in step()
 
         # Use standard tinker renderer to build prompt
@@ -489,7 +521,7 @@ class CVDPAgenticEnvQwen(Env):
         has_tool_call_close = '</tool_call>' in generated_text
 
         if has_tool_call_open and not has_tool_call_close:
-            logger.warning("[extract] Detected TRUNCATED tool_call - response was cut off")
+            self.task_logger.warning("[extract] Detected TRUNCATED tool_call - response was cut off")
             return [{"command": None, "error": "TRUNCATED"}]
 
         # Method 1: Parse <tool_call> tags (Qwen's native format)
@@ -503,7 +535,7 @@ class CVDPAgenticEnvQwen(Env):
                     command = tool_call.get("args", {}).get("command")
                     if command:
                         commands.append({"command": command, "error": None})
-                        logger.info(f"[extract] Found tool_call command: {command[:100]}...")
+                        self.task_logger.info(f"[extract] Found tool_call command: {command[:100]}...")
                     else:
                         commands.append({"command": None, "error": "Missing 'command' in args"})
                 else:
@@ -511,9 +543,9 @@ class CVDPAgenticEnvQwen(Env):
                     command = tool_call.get("args", {}).get("command")
                     if command:
                         commands.append({"command": command, "error": None})
-                        logger.info(f"[extract] Found command in unknown tool: {command[:100]}...")
+                        self.task_logger.info(f"[extract] Found command in unknown tool: {command[:100]}...")
             except json.JSONDecodeError as e:
-                logger.warning(f"[extract] Failed to parse tool_call JSON: {e}")
+                self.task_logger.warning(f"[extract] Failed to parse tool_call JSON: {e}")
                 commands.append({"command": None, "error": f"JSON decode failed: {e}"})
 
         if commands:
@@ -527,7 +559,7 @@ class CVDPAgenticEnvQwen(Env):
             command = match.strip()
             if command:
                 commands.append({"command": command, "error": None})
-                logger.info(f"[extract] Found bash block command: {command[:100]}...")
+                self.task_logger.info(f"[extract] Found bash block command: {command[:100]}...")
 
         # Method 3: Look for explicit command markers
         if not commands:
@@ -542,7 +574,7 @@ class CVDPAgenticEnvQwen(Env):
                     command = match.strip()
                     if command and len(command) > 2:
                         commands.append({"command": command, "error": None})
-                        logger.info(f"[extract] Found pattern command: {command[:100]}...")
+                        self.task_logger.info(f"[extract] Found pattern command: {command[:100]}...")
 
         return commands
 
@@ -564,7 +596,7 @@ class CVDPAgenticEnvQwen(Env):
         else:
             generated_text = str(action)
 
-        logger.info(f"TURN {self.current_turn}/{self.max_turns}")
+        self.task_logger.info(f"TURN {self.current_turn}/{self.max_turns}")
 
         # Log model output to per-turn log file
         self._write_turn_log(self.current_turn, "MODEL_OUTPUT", generated_text)
@@ -579,12 +611,12 @@ class CVDPAgenticEnvQwen(Env):
 
         if not extracted_items:
             # No command found - treat as final answer attempt
-            logger.info("No command found in response - checking for final answer")
+            self.task_logger.info("No command found in response - checking for final answer")
             return await self._handle_final_answer(generated_text)
 
         # Check for truncated tool call (special case)
         if len(extracted_items) == 1 and extracted_items[0].get("error") == "TRUNCATED":
-            logger.warning("Tool call was truncated - giving feedback to model")
+            self.task_logger.warning("Tool call was truncated - giving feedback to model")
             truncation_feedback = (
                 "ERROR: Your response was cut off before the </tool_call> tag. "
                 "Your command was too long and got truncated.\n\n"
@@ -600,7 +632,7 @@ class CVDPAgenticEnvQwen(Env):
             )
             # Check for max turns
             if self.current_turn >= self.max_turns:
-                logger.warning(f"Max turns ({self.max_turns}) reached. Ending episode.")
+                self.task_logger.warning(f"Max turns ({self.max_turns}) reached. Ending episode.")
                 return await self._handle_episode_end("max_turns")
 
             # Truncate context if needed before retry
@@ -630,11 +662,11 @@ class CVDPAgenticEnvQwen(Env):
             error = item.get("error")
 
             if error:
-                logger.info(f"Processing parsing error {i+1}/{len(extracted_items)}: {error}")
+                self.task_logger.info(f"Processing parsing error {i+1}/{len(extracted_items)}: {error}")
                 observation_text = f"Error parsing command: {error}"
                 stdout, stderr, returncode = "", error, 1
             else:
-                logger.info(f"Executing command {i+1}/{len(extracted_items)}: {command}")
+                self.task_logger.info(f"Executing command {i+1}/{len(extracted_items)}: {command}")
 
                 # Execute command in Docker container
                 stdout, stderr, returncode = await self._execute_command_in_container(command)
@@ -654,7 +686,7 @@ class CVDPAgenticEnvQwen(Env):
                 should_end, end_reason = self._check_episode_done(command, stdout, stderr, returncode)
 
                 if should_end:
-                    logger.info(f"Episode ending: {end_reason}")
+                    self.task_logger.info(f"Episode ending: {end_reason}")
                     return await self._handle_episode_end(end_reason)
 
         # Add tool response to conversation history
@@ -690,7 +722,7 @@ class CVDPAgenticEnvQwen(Env):
         """
         Handle case where model provides final answer without command.
         """
-        logger.info("Model provided final answer - running evaluation")
+        self.task_logger.info("Model provided final answer - running evaluation")
         return await self._handle_episode_end("final_answer")
 
     async def _handle_episode_end(self, reason: str) -> StepResult:
@@ -701,7 +733,7 @@ class CVDPAgenticEnvQwen(Env):
 
         # Copy files from container to workspace before evaluation
         if self.docker_container_id:
-            logger.info("Copying files from container to workspace...")
+            self.task_logger.info("Copying files from container to workspace...")
             try:
                 # Copy /code/. to workspace_dir/problem_id/
                 dest_dir = os.path.join(self.workspace_dir, self.problem_id)
@@ -712,11 +744,11 @@ class CVDPAgenticEnvQwen(Env):
                 )
                 stdout, stderr = await proc.communicate()
                 if proc.returncode != 0:
-                    logger.error(f"Failed to copy files: {stderr.decode()}")
+                    self.task_logger.error(f"Failed to copy files: {stderr.decode()}")
                 else:
-                    logger.info("Files copied successfully.")
+                    self.task_logger.info("Files copied successfully.")
             except Exception as e:
-                logger.error(f"Error copying files: {e}")
+                self.task_logger.error(f"Error copying files: {e}")
 
         # Run CVDP evaluation
         eval_result = await self._run_cvdp_evaluation()
@@ -734,8 +766,14 @@ class CVDPAgenticEnvQwen(Env):
             f"Pass Rate: {eval_result.get('pass_rate', 0.0):.2%}\n"
             f"Final Reward: {reward:.4f}"
         )
-        logger.info(f"EPISODE END: {reason}, reward={reward:.4f}")
+        self.task_logger.info(f"EPISODE END: {reason}, reward={reward:.4f}")
         self._write_turn_log(self.current_turn, "EPISODE_END", episode_summary)
+
+        # Also log episode summary to main logs.log for easy review of all tasks
+        logger.info(f"EPISODE END [{self.problem_id}]: {reason}, turns={self.current_turn}/{self.max_turns}, "
+                    f"format={eval_result['format_valid']}, syntax={eval_result['syntax_valid']}, "
+                    f"tests={eval_result['tests_passed']}, pass_rate={eval_result.get('pass_rate', 0.0):.2%}, "
+                    f"reward={reward:.4f}")
 
         # Write episode summary file
         self._write_episode_summary(reason, eval_result, reward)
@@ -814,6 +852,9 @@ class CVDPAgenticEnvQwen(Env):
             # Replace __OSS_SIM_IMAGE__ placeholder
             if "docker-compose.yml" in file_path:
                 content = content.replace("__OSS_SIM_IMAGE__", "ghcr.io/hdl/sim/osvb:latest")
+                # Fix: Add missing volume mount for code directory
+                if "- ./code:/code" not in content:
+                    content = content.replace("- ./src/:/src/:ro", "- ./src/:/src/:ro\n      - ./code:/code")
 
             with open(full_path, 'w') as f:
                 f.write(content)
@@ -847,7 +888,7 @@ class CVDPAgenticEnvQwen(Env):
             returncode = proc.returncode
 
         except asyncio.TimeoutError:
-            logger.warning(f"Docker evaluation timeout for {self.problem_id}")
+            self.task_logger.warning(f"Docker evaluation timeout for {self.problem_id}")
             return {
                 "format_valid": True,
                 "syntax_valid": False,
@@ -855,7 +896,7 @@ class CVDPAgenticEnvQwen(Env):
                 "pass_rate": 0.0,
             }
         except Exception as e:
-            logger.error(f"Docker evaluation error: {e}")
+            self.task_logger.error(f"Docker evaluation error: {e}")
             return {
                 "format_valid": True,
                 "syntax_valid": False,
