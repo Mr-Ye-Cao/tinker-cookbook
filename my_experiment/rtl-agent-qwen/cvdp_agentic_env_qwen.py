@@ -841,6 +841,8 @@ class CVDPAgenticEnvQwen(Env):
         harness_dir = os.path.join(problem_workspace, "harness", "1")
         os.makedirs(harness_dir, exist_ok=True)
 
+        service_name = "direct"  # Default service name
+
         # Write harness files
         for file_path, content in self.harness_config.items():
             if content is None:
@@ -855,6 +857,12 @@ class CVDPAgenticEnvQwen(Env):
                 # Fix: Add missing volume mount for code directory
                 if "- ./code:/code" not in content:
                     content = content.replace("- ./src/:/src/:ro", "- ./src/:/src/:ro\n      - ./code:/code")
+
+                # Detect service name from docker-compose.yml
+                match = re.search(r'services:\s*\n\s+([a-zA-Z0-9_\-]+):', content)
+                if match:
+                    service_name = match.group(1)
+                    self.task_logger.info(f"Detected docker service name: {service_name}")
 
             with open(full_path, 'w') as f:
                 f.write(content)
@@ -872,7 +880,7 @@ class CVDPAgenticEnvQwen(Env):
         try:
             proc = await asyncio.create_subprocess_exec(
                 'docker', 'compose', '-f', 'docker-compose.yml', 'up',
-                '--abort-on-container-exit', '--exit-code-from', 'direct',
+                '--abort-on-container-exit', '--exit-code-from', service_name,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=harness_dir
@@ -885,6 +893,17 @@ class CVDPAgenticEnvQwen(Env):
 
             stdout_str = stdout.decode('utf-8', errors='replace')
             stderr_str = stderr.decode('utf-8', errors='replace')
+
+            # Log evaluation output to file
+            try:
+                eval_log_path = os.path.join(self.turn_logs_dir, "eval_pipeline_output.log")
+                with open(eval_log_path, "w") as f:
+                    f.write("STDOUT:\n")
+                    f.write(stdout_str)
+                    f.write("\n\nSTDERR:\n")
+                    f.write(stderr_str)
+            except Exception as e:
+                self.task_logger.error(f"Failed to write eval log: {e}")
             returncode = proc.returncode
 
         except asyncio.TimeoutError:
