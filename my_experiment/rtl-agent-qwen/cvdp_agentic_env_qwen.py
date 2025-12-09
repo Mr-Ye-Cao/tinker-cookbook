@@ -117,7 +117,7 @@ class CVDPAgenticEnvQwen(Env):
         self.episode_ended = False
 
         # Context management - Qwen3-8B has 32k context
-        self.max_context_tokens = 16000  # Leave room for max_tokens=8192 (16k + 8k = 24k, safe buffer)
+        self.max_context_tokens = 19000  # Leave room for max_tokens=12000 (19k + 12k = 31k, safe buffer)
         self.keep_first_n_messages = 2   # Always keep system + initial user prompt
 
         # Per-turn logging directory
@@ -131,8 +131,14 @@ class CVDPAgenticEnvQwen(Env):
         return self.renderer.get_stop_sequences()
 
     def _estimate_tokens(self, text: str) -> int:
-        """Rough token estimate (4 chars per token for English)"""
-        return len(text) // 4
+        """
+        Accurate token estimate using renderer's tokenizer.
+        """
+        try:
+            return len(self.renderer.tokenizer.encode(text, add_special_tokens=False))
+        except Exception:
+            # Fallback to conservative estimate (2.5 chars per token for code)
+            return int(len(text) / 2.5)
 
     def _get_context_tokens(self) -> int:
         """Estimate total tokens in conversation history"""

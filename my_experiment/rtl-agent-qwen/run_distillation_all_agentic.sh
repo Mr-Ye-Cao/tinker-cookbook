@@ -1,10 +1,10 @@
 #!/bin/bash
-# Agentic On-Policy Distillation with 16 Easy Problems (Qwen Version)
+# Agentic On-Policy Distillation with All Non-Commercial Problems (Qwen Version)
 
 set -e
 
 echo "====================================================================="
-echo "RTL Agent - Agentic On-Policy Distillation (16 Easy Problems - Qwen)"
+echo "RTL Agent - Agentic On-Policy Distillation (All 92 Non-Commercial Problems - Qwen)"
 echo "Teacher: Qwen/Qwen3-32B -> Student: Qwen/Qwen3-8B"
 echo "Mode: Multi-turn agentic (model executes bash commands)"
 echo "====================================================================="
@@ -46,16 +46,16 @@ else
     echo "WANDB_API_KEY found (length: ${#WANDB_API_KEY}) - wandb logging enabled"
 fi
 
-DATASET_PATH="cvdp_16_easy_problems.jsonl"
+DATASET_PATH="cvdp_full_agentic_noncommercial.jsonl"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-LOG_DIR="./logs/qwen_agentic_distill_16easy_${TIMESTAMP}"
-WORKSPACE_DIR="./workspaces/qwen_agentic_workspace_16easy_${TIMESTAMP}"
+LOG_DIR="./logs/qwen_agentic_distill_all_noncommercial_${TIMESTAMP}"
+WORKSPACE_DIR="./workspaces/qwen_agentic_workspace_all_noncommercial_${TIMESTAMP}"
 
 echo ""
 echo "Configuration:"
 echo "  Student: Qwen/Qwen3-8B"
 echo "  Teacher: Qwen/Qwen3-32B"
-echo "  Dataset: $DATASET_PATH (16 problems)"
+echo "  Dataset: $DATASET_PATH (92 problems)"
 echo "  Mode: Multi-turn agentic (max 50 turns per episode)"
 echo "  Batch size: 2"
 echo "  Group size: 2 (GRPO-style)"
