@@ -196,12 +196,45 @@ class CVDPAgenticEnvQwen(Env):
     def _build_prompt_with_context(self) -> str:
         """
         Build enriched prompt including specification and relevant context files.
+        Respects max_context_tokens to prevent overflow.
 
         Returns:
             Complete prompt with embedded context files
         """
         parts = [self.prompt]
         parts.append("")  # Blank line separator
+        
+        # Track current token usage
+        current_tokens = self._estimate_tokens(self.prompt)
+        
+        # Account for System Message and Template overhead
+        system_tokens = self._estimate_tokens(self.system_message if self.system_message else "")
+        # Reserve buffer for chat template formatting (<|im_start|>, roles, etc.) and safety
+        safety_buffer = 1000 
+        
+        # Calculate effective limit for context files
+        effective_max = self.max_context_tokens - system_tokens - safety_buffer
+        
+        logger.info(f"Context budget: {self.max_context_tokens} total - {system_tokens} system - {safety_buffer} buffer = {effective_max} available for files")
+        
+        # Helper to safely add content
+        def try_add_section(header, content, filepath):
+            nonlocal current_tokens
+            # Construct the exact text that would be added
+            section_text = f"{header} ({filepath})\n\n{content}\n"
+            section_tokens = self._estimate_tokens(section_text)
+            
+            if current_tokens + section_tokens > effective_max:
+                logger.warning(f"Skipping {filepath} due to context limit ({current_tokens} + {section_tokens} > {effective_max})")
+                return False
+                
+            parts.append(f"{header} ({filepath})")
+            parts.append("")
+            parts.append(content)
+            parts.append("")
+            current_tokens += section_tokens
+            logger.info(f"Including {filepath} ({len(content)} chars, ~{section_tokens} tokens)")
+            return True
 
         # Priority 1: Include specification (critical for correct interface)
         spec_file = None
@@ -212,11 +245,7 @@ class CVDPAgenticEnvQwen(Env):
                     break
 
         if spec_file:
-            parts.append(f"## Context: Specification ({spec_file})")
-            parts.append("")
-            parts.append(self.context_files[spec_file])
-            parts.append("")
-            logger.info(f"Including specification: {spec_file} ({len(self.context_files[spec_file])} chars)")
+            try_add_section("## Context: Specification", self.context_files[spec_file], spec_file)
 
         # Priority 2: Include testbench (helpful for understanding test expectations)
         tb_file = None
@@ -227,36 +256,24 @@ class CVDPAgenticEnvQwen(Env):
                     break
 
         if tb_file:
-            parts.append(f"## Context: Testbench ({tb_file})")
-            parts.append("")
-            parts.append(self.context_files[tb_file])
-            parts.append("")
-            logger.info(f"Including testbench: {tb_file} ({len(self.context_files[tb_file])} chars)")
+            try_add_section("## Context: Testbench", self.context_files[tb_file], tb_file)
 
         # Priority 3: Include RTL files (for bug-fix tasks where model needs to see existing code)
         rtl_files_included = []
         for file_path, content in self.context_files.items():
             if file_path not in [spec_file, tb_file] and content is not None:
                 if file_path.startswith('rtl/') and len(content.strip()) >= 100:
-                    parts.append(f"## Context: Existing RTL ({file_path})")
-                    parts.append("")
-                    parts.append(content)
-                    parts.append("")
-                    logger.info(f"Including RTL file: {file_path} ({len(content)} chars)")
-                    rtl_files_included.append(file_path)
+                    if try_add_section("## Context: Existing RTL", content, file_path):
+                        rtl_files_included.append(file_path)
 
         # Priority 4: Include any other documentation
         for file_path, content in self.context_files.items():
             if file_path not in [spec_file, tb_file] + rtl_files_included and content is not None:
                 if file_path.startswith('docs/') or 'readme' in file_path.lower():
-                    parts.append(f"## Context: {file_path}")
-                    parts.append("")
-                    parts.append(content)
-                    parts.append("")
-                    logger.info(f"Including documentation: {file_path} ({len(content)} chars)")
+                    try_add_section("## Context", content, file_path)
 
         enriched_prompt = "\n".join(parts)
-        logger.info(f"Built enriched prompt: {len(enriched_prompt)} total chars")
+        logger.info(f"Built enriched prompt: {len(enriched_prompt)} chars, ~{current_tokens} tokens")
         return enriched_prompt
 
     def _setup_workspace(self):
