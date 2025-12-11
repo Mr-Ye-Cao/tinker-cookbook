@@ -16,10 +16,11 @@ from typing import List, Dict, Any
 
 import chz
 from openai import AsyncOpenAI
-import tinker 
+import tinker
 # We still import tinker renderers even if we don't use the client
 from tinker_cookbook import renderers, model_info
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.utils import ml_log
 
 from cvdp_agentic_env_qwen import CVDPAgenticEnvQwen
 
@@ -232,7 +233,19 @@ class AgenticEvaluator:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         run_log_dir = f"{self.config.log_dir}_{timestamp}"
         os.makedirs(run_log_dir, exist_ok=True)
-        
+
+        # Configure logging to file for high-level overview
+        ml_log.configure_logging_module(os.path.join(run_log_dir, "logs.log"))
+        logger.info("=" * 80)
+        logger.info("RTL Agent - Agentic Evaluation")
+        logger.info("=" * 80)
+        logger.info(f"Model: {self.config.student_model}")
+        logger.info(f"API: {self.config.api_base}")
+        logger.info(f"Dataset: {self.config.cvdp_jsonl_path}")
+        logger.info(f"Max turns: {self.config.max_turns}")
+        logger.info(f"Log directory: {run_log_dir}")
+        logger.info("=" * 80)
+
         semaphore = asyncio.Semaphore(self.config.concurrency)
         results = []
         
