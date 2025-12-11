@@ -48,7 +48,6 @@ python evaluate_distillation_agentic.py \
   workspace_dir="$WORKSPACE_DIR" \
   log_dir="$LOG_DIR" \
   concurrency=1 \
-  limit=1 \
   max_turns=60 \
   max_tokens=12000 \
   timeout_seconds=30 \
