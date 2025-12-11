@@ -250,11 +250,7 @@ class AgenticEvaluator:
         pass_rate = success_count / total if total > 0 else 0
         
         summary = {
-            "config": {
-                "model": self.config.student_model,
-                "api_base": self.config.api_base,
-                "dataset": self.config.cvdp_jsonl_path
-            },
+            "config": chz.asdict(self.config),
             "timestamp": timestamp,
             "total_problems": total,
             "success_count": success_count,
