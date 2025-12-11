@@ -40,12 +40,14 @@ class EvalConfig:
     # Dataset
     cvdp_jsonl_path: str = "cvdp_16_easy_problems.jsonl"
     limit: int | None = None  # Limit number of problems (optional)
+    temperature: float = 1.0 # Temperature for sampling
     
     # Environment
     workspace_dir: str = "/tmp/cvdp_eval_workspace"
     docker_image: str = "gpt-oss-20b-agent-base:latest"
     timeout_seconds: int = 30
     max_turns: int = 50
+    max_tokens: int = 4096  # Max generation tokens per turn
     
     # Execution
     concurrency: int = 2  # Number of parallel environments
@@ -74,6 +76,17 @@ class AgenticEvaluator:
             api_key=config.api_key
         )
         logger.info(f"Initialized OpenAI Configured Client: {config.api_base}")
+
+        # Load global agentic system message
+        self.system_message = None
+        agentic_msg_path = os.path.join(os.path.dirname(__file__), "AGENTIC_SYSTEM_MESSAGE.txt")
+        if os.path.exists(agentic_msg_path):
+            with open(agentic_msg_path, 'r') as f:
+                self.system_message = f.read().strip()
+            logger.info(f"Loaded agentic system message from {agentic_msg_path}")
+        else:
+            logger.warning(f"Agentic message file not found: {agentic_msg_path}. Agent might behave as non-agentic.")
+
 
     def load_problems(self) -> List[Dict]:
         """Load problems from JSONL"""
@@ -106,7 +119,7 @@ class AgenticEvaluator:
             harness_config=problem.get("harness", {}),
             workspace_dir=self.config.workspace_dir,
             renderer=self.renderer,
-            system_message=problem.get("system_message"), # Use problem-specific or default
+            system_message=self.system_message, # Force global agentic message
             docker_image=self.config.docker_image,
             timeout_seconds=self.config.timeout_seconds,
             max_turns=self.config.max_turns,
@@ -148,8 +161,8 @@ class AgenticEvaluator:
                     response = await self.client.chat.completions.create(
                         model=self.config.student_model,
                         messages=messages,
-                        max_tokens=4096,
-                        temperature=0.0,
+                        max_tokens=self.config.max_tokens,
+                        temperature=self.config.temperature,
                         # We don't pass stop sequences here as they might be token-based in Tinker
                         # but string-based in OpenAI. 
                         # env.stop_condition is list of lists of token ids.

@@ -49,7 +49,10 @@ python evaluate_distillation_agentic.py \
   log_dir="$LOG_DIR" \
   concurrency=1 \
   limit=1 \
-  max_turns=60
+  max_turns=60 \
+  max_tokens=12000 \
+  timeout_seconds=30 \
+  docker_image="gpt-oss-20b-agent-base:latest"
 
 echo ""
 echo "====================================================================="
