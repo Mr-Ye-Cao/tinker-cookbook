@@ -700,6 +700,9 @@ class CVDPAgenticEnvQwen(Env):
                 stdout, stderr, returncode = "", error, 1
             else:
                 self.task_logger.info(f"Executing command {i+1}/{len(extracted_items)}: {command}")
+                # Also log to module logger for high-level overview in main logs.log
+                cmd_preview = command[:120] + "..." if len(command) > 120 else command
+                logger.info(f"[{self.problem_id}] Turn {self.current_turn} CMD: {cmd_preview}")
 
                 # Execute command in Docker container
                 stdout, stderr, returncode = await self._execute_command_in_container(command)

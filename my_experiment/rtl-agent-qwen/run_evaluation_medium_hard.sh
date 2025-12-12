@@ -1,12 +1,13 @@
 #!/bin/bash
-# Agentic Evaluation on 16 Easy Problems (Remote API)
+# Agentic Evaluation on Medium + Hard Problems (Remote API)
 
 set -e
 
 echo "====================================================================="
-echo "RTL Agent - Agentic Evaluation (16 Easy Problems)"
+echo "RTL Agent - Agentic Evaluation (Medium + Hard Problems)"
 echo "Mode: Multi-turn agentic (model executes bash commands)"
 echo "Model: Remote API Call"
+echo "Dataset: 55 medium + 20 hard = 75 problems"
 echo "====================================================================="
 
 # Setup environment
@@ -32,10 +33,10 @@ STUDENT_MODEL="${STUDENT_MODEL:-Qwen/Qwen3-8B}"
 TOKENIZER_NAME="${TOKENIZER_NAME:-Qwen/Qwen3-8B}"
 API_KEY="${API_KEY:-EMPTY}"
 
-DATASET_PATH="cvdp_16_easy_problems.jsonl"
+DATASET_PATH="cvdp_medium_hard_problems.jsonl"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-LOG_DIR="./logs/eval_16easy_${TIMESTAMP}"
-WORKSPACE_DIR="./workspaces/eval_workspace_16easy_${TIMESTAMP}"
+LOG_DIR="./logs/eval_medium_hard_${TIMESTAMP}"
+WORKSPACE_DIR="./workspaces/eval_workspace_medium_hard_${TIMESTAMP}"
 
 echo "Starting evaluation..."
 
