@@ -47,7 +47,7 @@ python evaluate_distillation_agentic.py \
   cvdp_jsonl_path="$DATASET_PATH" \
   workspace_dir="$WORKSPACE_DIR" \
   log_dir="$LOG_DIR" \
-  concurrency=4 \
+  concurrency=8 \
   max_turns=50 \
   max_tokens=12000 \
   timeout_seconds=30 \
