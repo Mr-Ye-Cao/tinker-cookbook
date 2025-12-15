@@ -69,17 +69,43 @@ def parse_logs(difficulty_map):
     return results, sorted(all_problems), sorted(all_models)
 
 def format_cell(rates):
+    """Format pass rates with visual consistency indicator.
+
+    Uses ✓/✗/% to show pass/fail for each eval.
+    Color emoji indicates overall consistency:
+    🟢 = all passed (100% consistent)
+    🟡 = mixed results (≥50% passed)
+    🟠 = low consistency (<50% passed)
+    🔴 = all failed (0% pass rate)
+    """
     if not rates:
         return "-"
-    rate_strs = []
+
+    # Build visual indicator for each eval
+    symbols = []
     for r in rates:
         if r == 100.0:
-            rate_strs.append("✓")
+            symbols.append("✓")
         elif r == 0.0:
-            rate_strs.append("✗")
+            symbols.append("✗")
         else:
-            rate_strs.append(f"{r:.0f}%")
-    return f"`[{len(rates)}]` {' '.join(rate_strs)}"
+            symbols.append(f"{r:.0f}%")
+
+    # Count full passes for consistency
+    passes = sum(1 for r in rates if r == 100.0)
+    total = len(rates)
+
+    # Determine consistency emoji
+    if passes == total:
+        emoji = "🟢"  # All passed - highly consistent
+    elif passes == 0:
+        emoji = "🔴"  # All failed
+    elif passes / total >= 0.5:
+        emoji = "🟡"  # ≥50% passed
+    else:
+        emoji = "🟠"  # <50% passed - low consistency
+
+    return f"{' '.join(symbols)} {emoji}"
 
 def is_solved(rates):
     return any(r == 100.0 for r in rates) if rates else False
@@ -112,6 +138,10 @@ def main():
         md_lines.append(line)
 
     add("# Evaluation Results Analysis")
+    add()
+    add("**Legend:** `✓` = 100% pass, `✗` = 0% fail, `N%` = partial pass")
+    add("")
+    add("**Consistency:** 🟢 = all passed, 🟡 = ≥50% passed, 🟠 = <50% passed, 🔴 = all failed")
     add()
 
     # =======================================================================
