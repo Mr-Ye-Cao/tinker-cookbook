@@ -114,6 +114,10 @@ class AgenticEvaluator:
         run_log_path = os.path.join(log_dir_base, f"{problem_id}_{worker_id}")
         os.makedirs(run_log_path, exist_ok=True)
         
+        # Extract difficulty from categories (e.g., ['cid005', 'medium'] -> 'medium')
+        categories = problem.get("categories", [])
+        difficulty = categories[1] if len(categories) > 1 else "unknown"
+
         # Create environment
         env = CVDPAgenticEnvQwen(
             problem_id=problem_id,
@@ -126,7 +130,8 @@ class AgenticEvaluator:
             docker_image=self.config.docker_image,
             timeout_seconds=self.config.timeout_seconds,
             max_turns=self.config.max_turns,
-            log_path=run_log_path
+            log_path=run_log_path,
+            difficulty=difficulty,
         )
         
         try:

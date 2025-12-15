@@ -70,6 +70,7 @@ class CVDPAgenticEnvQwen(Env):
         syntax_coef: float = 0.3,
         test_coef: float = 1.0,
         log_path: str | None = None,  # Directory for turn logs (if None, uses workspace_dir)
+        difficulty: str = "unknown",  # Problem difficulty: easy/medium/hard
     ):
         """
         Args:
@@ -87,8 +88,10 @@ class CVDPAgenticEnvQwen(Env):
             syntax_coef: Reward coefficient for syntax validity
             test_coef: Reward coefficient for passing tests
             log_path: Directory for turn logs (if None, uses workspace_dir)
+            difficulty: Problem difficulty level (easy/medium/hard)
         """
         self.problem_id = problem_id
+        self.difficulty = difficulty
         self.prompt = prompt
         self.context_files = context_files
         self.harness_config = harness_config
@@ -806,7 +809,7 @@ class CVDPAgenticEnvQwen(Env):
         self._write_turn_log(self.current_turn, "EPISODE_END", episode_summary)
 
         # Also log episode summary to main logs.log for easy review of all tasks
-        logger.info(f"EPISODE END [{self.problem_id}]: {reason}, turns={self.current_turn}/{self.max_turns}, "
+        logger.info(f"EPISODE END [{self.problem_id}, {self.difficulty}]: {reason}, turns={self.current_turn}/{self.max_turns}, "
                     f"format={eval_result['format_valid']}, syntax={eval_result['syntax_valid']}, "
                     f"tests={eval_result['tests_passed']}, pass_rate={eval_result.get('pass_rate', 0.0):.2%}, "
                     f"reward={reward:.4f}")
