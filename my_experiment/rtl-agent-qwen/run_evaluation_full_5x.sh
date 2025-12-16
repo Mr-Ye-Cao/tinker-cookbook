@@ -1,6 +1,6 @@
 #!/bin/bash
 # Continuous Evaluation Runner
-# Runs full evaluation (all 92 problems) three times per iteration in an infinite loop
+# Runs full evaluation (all 92 problems) five times per iteration in an infinite loop
 
 set -e
 
@@ -11,7 +11,7 @@ ITERATION=1
 
 echo "====================================================================="
 echo "Continuous Evaluation Runner"
-echo "Will run: full (92 problems) x3 in a loop"
+echo "Will run: full (92 problems) x5 in a loop"
 echo "Press Ctrl+C to stop"
 echo "====================================================================="
 
@@ -23,7 +23,7 @@ while true; do
     echo "############################################################"
     echo ""
 
-    echo ">>> Running full evaluation (run 1 of 3)..."
+    echo ">>> Running full evaluation (run 1 of 5)..."
     if ./run_evaluation_full.sh; then
         echo ">>> Full evaluation (run 1) completed successfully"
     else
@@ -32,7 +32,7 @@ while true; do
     fi
 
     echo ""
-    echo ">>> Running full evaluation (run 2 of 3)..."
+    echo ">>> Running full evaluation (run 2 of 5)..."
     if ./run_evaluation_full.sh; then
         echo ">>> Full evaluation (run 2) completed successfully"
     else
@@ -41,11 +41,29 @@ while true; do
     fi
 
     echo ""
-    echo ">>> Running full evaluation (run 3 of 3)..."
+    echo ">>> Running full evaluation (run 3 of 5)..."
     if ./run_evaluation_full.sh; then
         echo ">>> Full evaluation (run 3) completed successfully"
     else
         echo ">>> Full evaluation (run 3) failed with exit code $?"
+        echo ">>> Continuing to next run..."
+    fi
+
+    echo ""
+    echo ">>> Running full evaluation (run 4 of 5)..."
+    if ./run_evaluation_full.sh; then
+        echo ">>> Full evaluation (run 4) completed successfully"
+    else
+        echo ">>> Full evaluation (run 4) failed with exit code $?"
+        echo ">>> Continuing to next run..."
+    fi
+
+    echo ""
+    echo ">>> Running full evaluation (run 5 of 5)..."
+    if ./run_evaluation_full.sh; then
+        echo ">>> Full evaluation (run 5) completed successfully"
+    else
+        echo ">>> Full evaluation (run 5) failed with exit code $?"
         echo ">>> Continuing to next iteration..."
     fi
 
